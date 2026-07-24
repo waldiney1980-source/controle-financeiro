@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#111827">
+<title>FinControl AI</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">FinControl <span>AI</span></div>
+    <nav class="nav" id="nav">
+      <button data-page="dashboard" class="active">🏠 Dashboard</button>
+      <button data-page="transactions">🧾 Despesas</button>
+      <button data-page="income">💰 Receitas</button>
+      <button data-page="cards">💳 Cartões</button>
+      <button data-page="budget">📊 Orçamento</button>
+      <button data-page="goals">🎯 Metas</button>
+      <button data-page="forecast">🔮 Projeções</button>
+      <button data-page="import">📥 Importar</button>
+    </nav>
+    <div class="sidebar-foot">
+      <span id="modeBadge" class="mode-badge">offline</span>
+    </div>
+  </aside>
+
+  <!-- Conteúdo -->
+  <main class="main">
+    <!-- DASHBOARD -->
+    <section id="page-dashboard" class="page">
+      <header class="top">
+        <div><h1>Dashboard financeiro</h1><p>Seu resumo do mês em um só lugar.</p></div>
+        <button class="btn" data-action="new-expense">+ Novo lançamento</button>
+      </header>
+
+      <div class="grid cards">
+        <div class="card kpi"><div class="label">Saldo atual</div><div class="value" id="kpiSaldo">R$ 0,00</div></div>
+        <div class="card kpi"><div class="label">Receitas do mês</div><div class="value positive" id="kpiReceitas">R$ 0,00</div></div>
+        <div class="card kpi"><div class="label">Despesas do mês</div><div class="value negative" id="kpiDespesas">R$ 0,00</div></div>
+        <div class="card kpi"><div class="label">Taxa de poupança</div><div class="value" id="kpiPoupanca">0%</div></div>
+      </div>
+
+      <div class="grid cards section">
+        <div class="card kpi"><div class="label">Comprometimento da renda</div><div class="value" id="kpiComprometimento">0%</div><div class="bar"><div class="fill" id="barComprometimento"></div></div></div>
+        <div class="card kpi"><div class="label">Reserva de emergência</div><div class="value" id="kpiReserva">R$ 0,00</div><div class="hint" id="hintReserva"></div></div>
+        <div class="card kpi"><div class="label">Média mensal de gastos</div><div class="value" id="kpiMedia">R$ 0,00</div></div>
+        <div class="card kpi"><div class="label">Capacidade de investir</div><div class="value" id="kpiCapacidade">R$ 0,00</div></div>
+      </div>
+
+      <div class="grid two section">
+        <div class="card"><div class="section-title">Despesas por categoria</div><div id="categoryChart"></div></div>
+        <div class="card"><div class="section-title">🤖 Oportunidades de economia</div><div id="insights"></div></div>
+      </div>
+
+      <div class="grid two section">
+        <div class="card"><div class="section-title">Últimos lançamentos</div><div id="recentTx"></div></div>
+        <div class="card"><div class="section-title">Saldo projetado</div><div id="miniForecast"></div></div>
+      </div>
+    </section>
+
+    <!-- DESPESAS -->
+    <section id="page-transactions" class="page hidden">
+      <header class="top">
+        <div><h1>Despesas</h1><p>Tudo o que saiu.</p></div>
+        <button class="btn" data-action="new-expense">+ Nova despesa</button>
+      </header>
+      <div class="card"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Forma</th><th class="right">Valor</th><th></th></tr></thead><tbody id="expenseTable"></tbody></table><div class="empty hidden" id="expenseEmpty">Nenhuma despesa ainda.</div></div>
+    </section>
+
+    <!-- RECEITAS -->
+    <section id="page-income" class="page hidden">
+      <header class="top">
+        <div><h1>Receitas</h1><p>Suas entradas.</p></div>
+        <button class="btn" data-action="new-income">+ Nova receita</button>
+      </header>
+      <div class="card"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Recorrência</th><th class="right">Valor</th><th></th></tr></thead><tbody id="incomeTable"></tbody></table><div class="empty hidden" id="incomeEmpty">Nenhuma receita ainda.</div></div>
+    </section>
+
+    <!-- CARTÕES -->
+    <section id="page-cards" class="page hidden">
+      <header class="top">
+        <div><h1>Cartões</h1><p>Limites e faturas.</p></div>
+        <button class="btn" data-action="new-card">+ Novo cartão</button>
+      </header>
+      <div class="grid three" id="cardsGrid"></div>
+      <div class="empty hidden" id="cardsEmpty">Nenhum cartão cadastrado.</div>
+    </section>
+
+    <!-- ORÇAMENTO -->
+    <section id="page-budget" class="page hidden">
+      <header class="top">
+        <div><h1>Orçamento mensal</h1><p>Defina um teto por categoria.</p></div>
+        <button class="btn" data-action="new-budget">+ Definir teto</button>
+      </header>
+      <div class="card"><div id="budgetList"></div></div>
+    </section>
+
+    <!-- METAS -->
+    <section id="page-goals" class="page hidden">
+      <header class="top">
+        <div><h1>Metas</h1><p>Objetivos financeiros.</p></div>
+        <button class="btn" data-action="new-goal">+ Nova meta</button>
+      </header>
+      <div class="grid three" id="goalsGrid"></div>
+      <div class="empty hidden" id="goalsEmpty">Nenhuma meta ainda.</div>
+    </section>
+
+    <!-- PROJEÇÕES -->
+    <section id="page-forecast" class="page hidden">
+      <header class="top">
+        <div><h1>Projeções de fluxo de caixa</h1><p>Baseado em receitas/despesas recorrentes e parcelas.</p></div>
+      </header>
+      <div class="grid cards">
+        <div class="card kpi"><div class="label">30 dias</div><div class="value" id="fc30">R$ 0,00</div></div>
+        <div class="card kpi"><div class="label">90 dias</div><div class="value" id="fc90">R$ 0,00</div></div>
+        <div class="card kpi"><div class="label">180 dias</div><div class="value" id="fc180">R$ 0,00</div></div>
+        <div class="card kpi"><div class="label">365 dias</div><div class="value" id="fc365">R$ 0,00</div></div>
+      </div>
+      <div class="card section"><div class="section-title">Evolução do saldo projetado (12 meses)</div><div id="forecastChart"></div></div>
+      <div class="card section"><div class="section-title">⚠️ Alertas de risco</div><div id="riskAlerts"></div></div>
+    </section>
+
+    <!-- IMPORTAR -->
+    <section id="page-import" class="page hidden">
+      <header class="top">
+        <div><h1>Importar extrato</h1><p>CSV do banco ou fatura do cartão.</p></div>
+      </header>
+      <div class="card">
+        <p class="hint">Envie um arquivo <b>CSV</b> com colunas de data, descrição e valor. O sistema tenta identificar as colunas e sugerir categorias automaticamente.</p>
+        <input type="file" id="csvFile" accept=".csv,text/csv">
+        <div id="importPreview" class="section"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Modal genérico -->
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <div class="modal-head"><h3 id="modalTitle">Novo</h3><button class="x" data-action="close-modal">✕</button></div>
+    <form id="modalForm" class="form-grid"></form>
+    <div class="actions">
+      <button class="btn secondary" type="button" data-action="close-modal">Cancelar</button>
+      <button class="btn" type="button" data-action="save-modal">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Supabase JS (usado quando config.js estiver preenchido) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/store.js"></script>
+<script src="js/forecast.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# Segredos / credenciais reais
+web/js/config.local.js
+.env
+.env.*
+
+# Dependências
+node_modules/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+*.swp
+
+# Claude Code (configurações locais)
+.claude/
+
+# Build / temporários
+dist/
+*.log
+tmp/
+
+# Planilhas de trabalho / extratos importados (dados pessoais)
+*.ofx
+extratos/
+faturas/
