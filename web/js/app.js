@@ -14,6 +14,67 @@
   const fmtDate = (s) => new Date(s + "T00:00:00").toLocaleDateString(cfg.LOCALE || "pt-BR");
   const el = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstChild; };
 
+  // ---------- Pessoa (quem lançou) ----------
+  function currentPerson() {
+    try {
+      const u = window.FC && FC.Auth && FC.Auth.user;
+      if (u && u.email) {
+        const nome = u.email.split("@")[0].replace(/[._-]+/g, " ").trim();
+        return nome.charAt(0).toUpperCase() + nome.slice(1);
+      }
+    } catch (e) {}
+    return "";
+  }
+  function knownPessoas() {
+    const set = new Set();
+    const cur = currentPerson(); if (cur) set.add(cur);
+    Store.allSync("transactions").forEach((t) => { if (t.pessoa) set.add(t.pessoa); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }
+  function refreshPessoasDatalist() {
+    const dl = $("#pessoasList"); if (!dl) return;
+    dl.innerHTML = knownPessoas().map((p) => `<option value="${p}"></option>`).join("");
+  }
+
+  // ---------- Filtros do dashboard ----------
+  const dashFilter = { pessoa: "", mes: "", categoria: "", tipo: "" };
+  function applyDashFilter(tx) {
+    return tx.filter((t) => {
+      if (dashFilter.pessoa && (t.pessoa || "") !== dashFilter.pessoa) return false;
+      if (dashFilter.mes && String(t.data || "").slice(0, 7) !== dashFilter.mes) return false;
+      if (dashFilter.categoria && t.category_id !== dashFilter.categoria) return false;
+      if (dashFilter.tipo && t.tipo !== dashFilter.tipo) return false;
+      return true;
+    });
+  }
+  function mesLabel(ym) {
+    const [y, m] = ym.split("-");
+    const s = new Date(+y, +m - 1, 1).toLocaleDateString(cfg.LOCALE || "pt-BR", { month: "short", year: "2-digit" });
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+  function fillSelect(sel, options, current, placeholder) {
+    if (!sel) return;
+    sel.innerHTML = `<option value="">${placeholder}</option>` +
+      options.map((o) => `<option value="${o.v}">${o.t}</option>`).join("");
+    sel.value = current || "";
+  }
+  function populateFilters(tx) {
+    // Pessoas
+    fillSelect($("#fPessoa"), knownPessoas().map((p) => ({ v: p, t: p })), dashFilter.pessoa, "Todos");
+    // Meses (dos lançamentos existentes, mais recentes primeiro)
+    const meses = Array.from(new Set(tx.map((t) => String(t.data || "").slice(0, 7)).filter(Boolean)))
+      .sort().reverse().map((ym) => ({ v: ym, t: mesLabel(ym) }));
+    fillSelect($("#fMes"), meses, dashFilter.mes, "Todos os meses");
+    // Categorias
+    const cats = Store.allSync("categories").map((c) => ({ v: c.id, t: c.icone + " " + c.nome }));
+    fillSelect($("#fCategoria"), cats, dashFilter.categoria, "Todas");
+    // Tipo (opções fixas no HTML)
+    const ft = $("#fTipo"); if (ft) ft.value = dashFilter.tipo || "";
+  }
+  function filtrosAtivos() {
+    return !!(dashFilter.pessoa || dashFilter.mes || dashFilter.categoria || dashFilter.tipo);
+  }
+
   // ---------- Gráfico de rosca (categorias) ----------
   function renderDonut(container, rows, catById) {
     if (!rows.length) { container.innerHTML = '<div class="empty">Sem despesas neste mês.</div>'; return; }
@@ -188,10 +249,9 @@
 
   // ---------- Dashboard ----------
   function renderDashboard(tx, accounts, cards, budgets, goals, catById) {
+    // KPIs globais de posição (não afetados pelos filtros)
     const ind = Forecast.indicators(tx, accounts, goals);
     setMoney("kpiSaldo", ind.saldoAtual);
-    setMoney("kpiReceitas", ind.receitasMes);
-    setMoney("kpiDespesas", ind.despesasMes);
     $("#kpiPoupanca").textContent = pct(ind.taxaPoupanca);
 
     $("#kpiComprometimento").textContent = pct(ind.comprometimento);
@@ -206,33 +266,46 @@
 
     const hu = $("#heroUpdated");
     if (hu) hu.textContent = "Atualizado às " + new Date().toLocaleTimeString(cfg.LOCALE || "pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+    // ---- Análise filtrada (pessoa, mês, categoria, tipo) ----
+    populateFilters(tx);
+    const ftx = applyDashFilter(tx);
+    const escopo = dashFilter.mes ? mesLabel(dashFilter.mes) : "todos os meses";
+    const quem = dashFilter.pessoa ? " • " + dashFilter.pessoa : "";
+
+    // Tiles: ganhos e gastos do escopo filtrado
+    const receitas = ftx.filter((t) => t.tipo === "receita").reduce((s, t) => s + (+t.valor || 0), 0);
+    const despesas = ftx.filter((t) => t.tipo === "despesa").reduce((s, t) => s + (+t.valor || 0), 0);
+    setMoney("kpiReceitas", receitas);
+    setMoney("kpiDespesas", despesas);
+    const lr = $("#lblReceitas"); if (lr) lr.textContent = "Ganhos • " + escopo + quem;
+    const ld = $("#lblDespesas"); if (ld) ld.textContent = "Gastos • " + escopo + quem;
     applyHide();
+
     renderUpcoming(tx, catById);
 
-    // Rosca de despesas por categoria (mês corrente)
-    const ref = new Date();
+    // Rosca de despesas por categoria (respeita os filtros)
     const byCat = {};
-    tx.forEach((t) => {
+    ftx.forEach((t) => {
       if (t.tipo !== "despesa") return;
-      const d = new Date(t.data);
-      if (d.getMonth() !== ref.getMonth() || d.getFullYear() !== ref.getFullYear()) return;
       byCat[t.category_id] = (byCat[t.category_id] || 0) + (+t.valor || 0);
     });
     const rows = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
     renderDonut($("#categoryChart"), rows, catById);
 
-    // Insights
-    const ins = Forecast.insights(tx, budgets, catById);
+    // Insights (respeita os filtros)
+    const ins = Forecast.insights(ftx, budgets, catById);
     $("#insights").innerHTML = ins.map((i) =>
       `<div class="alert ${i.level === "bad" ? "bad" : i.level === "ok" ? "ok" : ""}">${i.text}</div>`).join("");
 
-    // Últimos lançamentos
-    const recent = tx.slice().sort((a, b) => b.data.localeCompare(a.data)).slice(0, 6);
+    // Últimos lançamentos (respeita os filtros)
+    const recent = ftx.slice().sort((a, b) => (b.data || "").localeCompare(a.data || "")).slice(0, 8);
     $("#recentTx").innerHTML = recent.map((t) => {
       const c = catById(t.category_id);
-      return `<div class="row"><span>${c ? c.icone : "•"} ${t.descricao}<div class="muted">${fmtDate(t.data)}</div></span>
+      const who = t.pessoa ? " • " + t.pessoa : "";
+      return `<div class="row"><span>${c ? c.icone : "•"} ${t.descricao}<div class="muted">${fmtDate(t.data)}${who}</div></span>
         <b class="${t.tipo === "receita" ? "positive" : "negative"}">${t.tipo === "receita" ? "+" : "−"} ${money(t.valor)}</b></div>`;
-    }).join("") || '<div class="empty">Sem lançamentos.</div>';
+    }).join("") || `<div class="empty">${filtrosAtivos() ? "Nenhum lançamento com esses filtros." : "Sem lançamentos."}</div>`;
 
     // Mini projeção
     const p = Forecast.projectByDays(tx, accounts);
@@ -253,6 +326,7 @@
       return `<tr>
         <td>${fmtDate(t.data)}</td><td>${t.descricao}</td>
         <td>${c ? c.icone + " " + c.nome : "—"}</td>
+        <td>${t.pessoa || "—"}</td>
         <td>${t.forma === "cartao" ? "💳 Cartão" : "🏦 Conta"}</td>
         <td class="right negative">${money(t.valor)}</td>
         <td class="right"><button class="link-danger" data-del="transactions" data-id="${t.id}">excluir</button></td>
@@ -270,6 +344,7 @@
       return `<tr>
         <td>${fmtDate(t.data)}</td><td>${t.descricao}</td>
         <td>${c ? c.icone + " " + c.nome : "—"}</td>
+        <td>${t.pessoa || "—"}</td>
         <td>${t.recorrencia === "mensal" ? "🔁 Mensal" : "Única"}</td>
         <td class="right positive">${money(t.valor)}</td>
         <td class="right"><button class="link-danger" data-del="transactions" data-id="${t.id}">excluir</button></td>
@@ -420,6 +495,7 @@
       { name: "valor", label: "Valor (R$)", type: "number", req: true },
       { name: "data", label: "Data", type: "date", value: today() },
       { name: "category_id", label: "Categoria", type: "select", options: cats.filter(c => c.tipo === "despesa").map(c => ({ v: c.id, t: c.icone + " " + c.nome })) },
+      { name: "pessoa", label: "Quem lançou", type: "text", list: "pessoasList", value: currentPerson() },
       { name: "forma", label: "Forma", type: "select", options: [{ v: "conta", t: "🏦 Conta" }, { v: "cartao", t: "💳 Cartão" }] },
       { name: "recorrencia", label: "Recorrência", type: "select", options: [{ v: "nenhuma", t: "Única" }, { v: "mensal", t: "🔁 Mensal" }] },
       { name: "estabelecimento", label: "Estabelecimento", type: "text", full: true }
@@ -429,6 +505,7 @@
       { name: "valor", label: "Valor (R$)", type: "number", req: true },
       { name: "data", label: "Data", type: "date", value: today() },
       { name: "category_id", label: "Categoria", type: "select", options: cats.filter(c => c.tipo === "receita").map(c => ({ v: c.id, t: c.icone + " " + c.nome })) },
+      { name: "pessoa", label: "Quem lançou", type: "text", list: "pessoasList", value: currentPerson() },
       { name: "recorrencia", label: "Recorrência", type: "select", options: [{ v: "nenhuma", t: "Única" }, { v: "mensal", t: "🔁 Mensal" }] }
     ],
     card: () => [
@@ -468,6 +545,7 @@
   function today() { return new Date().toISOString().slice(0, 10); }
 
   function openModal(kind) {
+    refreshPessoasDatalist();
     const cats = Store.allSync("categories");
     const cards = Store.allSync("cards");
     if (kind === "installment" && !cards.length) {
@@ -485,7 +563,8 @@
         return `<div class="${wrap}"><label>${f.label}</label><select name="${f.name}">${opts}</select></div>`;
       }
       const val = f.value != null ? ` value="${f.value}"` : "";
-      return `<div class="${wrap}"><label>${f.label}</label><input name="${f.name}" type="${f.type}"${val}${f.req ? " required" : ""}></div>`;
+      const list = f.list ? ` list="${f.list}"` : "";
+      return `<div class="${wrap}"><label>${f.label}</label><input name="${f.name}" type="${f.type}"${val}${list}${f.req ? " required" : ""}></div>`;
     }).join("");
     modal.classList.add("show");
   }
@@ -745,6 +824,21 @@
       hideBal = !hideBal;
       localStorage.setItem("fc_hidebal", hideBal ? "1" : "0");
       applyHide();
+    });
+
+    // Filtros interativos do dashboard
+    const bindFilter = (id, key) => {
+      const s = $("#" + id);
+      if (s) s.addEventListener("change", () => { dashFilter[key] = s.value; render(); });
+    };
+    bindFilter("fPessoa", "pessoa");
+    bindFilter("fMes", "mes");
+    bindFilter("fCategoria", "categoria");
+    bindFilter("fTipo", "tipo");
+    const limpar = $("#fLimpar");
+    if (limpar) limpar.addEventListener("click", () => {
+      dashFilter.pessoa = dashFilter.mes = dashFilter.categoria = dashFilter.tipo = "";
+      render();
     });
     const billsTable = $("#billsTable");
     if (billsTable) billsTable.addEventListener("change", async (e) => {

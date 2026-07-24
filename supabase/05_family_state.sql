@@ -14,9 +14,13 @@ create table if not exists family_state (
   id          int primary key default 1,
   data        jsonb not null default '{}'::jsonb,
   updated_at  timestamptz not null default now(),
-  updated_by  uuid references auth.users(id) on delete set null,
+  updated_by  uuid,   -- só informativo (quem editou por último); sem FK de propósito
   constraint family_state_single_row check (id = 1)
 );
+
+-- Remove a trava antiga (se a tabela já existia com a foreign key).
+-- Ela quebrava a gravação se o usuário logado tivesse sido apagado.
+alter table family_state drop constraint if exists family_state_updated_by_fkey;
 
 -- Garante que a linha exista.
 insert into family_state (id, data) values (1, '{}'::jsonb)

@@ -17,15 +17,15 @@
   <aside class="sidebar">
     <div class="brand">FinControl <span>AI</span></div>
     <nav class="nav" id="nav">
-      <button data-page="dashboard" class="active">🏠 Dashboard</button>
-      <button data-page="transactions">🧾 Despesas</button>
-      <button data-page="income">💰 Receitas</button>
-      <button data-page="cards">💳 Cartões</button>
-      <button data-page="bills">📌 Contas a pagar <span class="nav-badge" id="billsBadge"></span></button>
-      <button data-page="budget">📊 Orçamento</button>
-      <button data-page="goals">🎯 Metas</button>
-      <button data-page="forecast">🔮 Projeções</button>
-      <button data-page="import">📥 Importar</button>
+      <button data-page="dashboard" class="active"><span class="ni">🏠</span><span class="nl">Dashboard</span></button>
+      <button data-page="transactions"><span class="ni">🧾</span><span class="nl">Despesas</span></button>
+      <button data-page="income"><span class="ni">💰</span><span class="nl">Receitas</span></button>
+      <button data-page="cards"><span class="ni">💳</span><span class="nl">Cartões</span></button>
+      <button data-page="bills"><span class="ni">📌</span><span class="nl">Contas</span><span class="nav-badge" id="billsBadge"></span></button>
+      <button data-page="budget"><span class="ni">📊</span><span class="nl">Orçamento</span></button>
+      <button data-page="goals"><span class="ni">🎯</span><span class="nl">Metas</span></button>
+      <button data-page="forecast"><span class="ni">🔮</span><span class="nl">Projeções</span></button>
+      <button data-page="import"><span class="ni">📥</span><span class="nl">Importar</span></button>
     </nav>
     <div class="sidebar-foot">
       <span id="modeBadge" class="mode-badge">offline</span>
@@ -50,9 +50,18 @@
         <div class="hero-value" id="kpiSaldo">R$ 0,00</div>
         <div class="hero-sub" id="heroUpdated">Atualizado agora</div>
         <div class="hero-tiles">
-          <div class="tile"><span class="tile-ic up">↗</span><div><small>Ganhos do mês</small><b class="positive" id="kpiReceitas">R$ 0,00</b></div></div>
-          <div class="tile"><span class="tile-ic down">↘</span><div><small>Gastos do mês</small><b class="negative" id="kpiDespesas">R$ 0,00</b></div></div>
+          <div class="tile"><span class="tile-ic up">↗</span><div><small id="lblReceitas">Ganhos do mês</small><b class="positive" id="kpiReceitas">R$ 0,00</b></div></div>
+          <div class="tile"><span class="tile-ic down">↘</span><div><small id="lblDespesas">Gastos do mês</small><b class="negative" id="kpiDespesas">R$ 0,00</b></div></div>
         </div>
+      </div>
+
+      <!-- Filtros interativos -->
+      <div class="filters section" id="dashFilters">
+        <div class="filt"><label>👤 Pessoa</label><select id="fPessoa"><option value="">Todos</option></select></div>
+        <div class="filt"><label>📅 Mês</label><select id="fMes"><option value="">Todos os meses</option></select></div>
+        <div class="filt"><label>🏷️ Categoria</label><select id="fCategoria"><option value="">Todas</option></select></div>
+        <div class="filt"><label>🔀 Tipo</label><select id="fTipo"><option value="">Tudo</option><option value="despesa">Só despesas</option><option value="receita">Só receitas</option></select></div>
+        <button class="btn secondary tiny" id="fLimpar" type="button">✕ Limpar</button>
       </div>
 
       <!-- Indicadores -->
@@ -87,7 +96,7 @@
         <div><h1>Despesas</h1><p>Tudo o que saiu.</p></div>
         <button class="btn" data-action="new-expense">+ Nova despesa</button>
       </header>
-      <div class="card"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Forma</th><th class="right">Valor</th><th></th></tr></thead><tbody id="expenseTable"></tbody></table><div class="empty hidden" id="expenseEmpty">Nenhuma despesa ainda.</div></div>
+      <div class="card"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Quem</th><th>Forma</th><th class="right">Valor</th><th></th></tr></thead><tbody id="expenseTable"></tbody></table><div class="empty hidden" id="expenseEmpty">Nenhuma despesa ainda.</div></div>
     </section>
 
     <!-- RECEITAS -->
@@ -96,7 +105,7 @@
         <div><h1>Receitas</h1><p>Suas entradas.</p></div>
         <button class="btn" data-action="new-income">+ Nova receita</button>
       </header>
-      <div class="card"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Recorrência</th><th class="right">Valor</th><th></th></tr></thead><tbody id="incomeTable"></tbody></table><div class="empty hidden" id="incomeEmpty">Nenhuma receita ainda.</div></div>
+      <div class="card"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Quem</th><th>Recorrência</th><th class="right">Valor</th><th></th></tr></thead><tbody id="incomeTable"></tbody></table><div class="empty hidden" id="incomeEmpty">Nenhuma receita ainda.</div></div>
     </section>
 
     <!-- CARTÕES -->
@@ -194,6 +203,9 @@
     </section>
   </main>
 </div>
+
+<!-- Lista de nomes já usados (autocompletar "Quem lançou") -->
+<datalist id="pessoasList"></datalist>
 
 <!-- Modal genérico -->
 <div class="modal" id="modal">

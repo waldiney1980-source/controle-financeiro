@@ -273,24 +273,71 @@ input[type=file]::file-selector-button:hover{background:rgba(255,255,255,.1)}
 .field select option{background:var(--surface);color:var(--text)}
 .actions{display:flex;justify-content:flex-end;gap:12px;margin-top:22px}
 
-/* ---------------- Responsivo ---------------- */
-@media(max-width:960px){
-  .sidebar{width:74px;padding:20px 12px}
-  .brand{font-size:0;padding:6px 0 26px;text-align:center}
-  .brand::after{content:"FC";font-size:20px;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-  .brand span{display:none}
-  .nav button{justify-content:center;font-size:0;padding:13px 0;gap:0}
-  .nav button.active::before{display:none}
-  .nav button::first-letter{font-size:19px}
-  .sidebar-foot{display:none}
-  .main{margin-left:74px;width:calc(100% - 74px);padding:20px}
-  .cards,.three,.two{grid-template-columns:1fr 1fr}
+/* ---------------- Filtros do dashboard ---------------- */
+.filters{
+  display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;
+  background:linear-gradient(180deg,var(--card-top),var(--card-bot));
+  border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;
 }
-@media(max-width:620px){
-  .cards,.three,.two,.form-grid{grid-template-columns:1fr}
-  .top{flex-direction:column;align-items:flex-start}
-  .top h1{font-size:24px}
-  .main{padding:16px}
+.filt{display:flex;flex-direction:column;gap:6px;flex:1;min-width:140px}
+.filt label{font-size:11.5px;font-weight:700;color:var(--muted)}
+.filt select{
+  padding:10px 12px;border:1px solid var(--line-strong);border-radius:10px;font-size:13.5px;font-family:inherit;
+  background:rgba(255,255,255,.03);color:var(--text);cursor:pointer;transition:.15s;
+}
+.filt select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,.18)}
+.filt select option{background:var(--surface);color:var(--text)}
+#fLimpar{flex:0 0 auto;align-self:flex-end}
+
+/* ---------------- Responsivo ---------------- */
+/* Menu lateral vira uma barra inferior (estilo app de banco) */
+@media(max-width:900px){
+  .app{display:block}
+  .sidebar{
+    width:100%;height:auto;position:fixed;inset:auto 0 0 0;
+    flex-direction:row;align-items:center;gap:6px;
+    padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px));
+    border-right:0;border-top:1px solid var(--line);
+    background:linear-gradient(0deg,rgba(8,13,26,.98),rgba(17,26,46,.94));
+    backdrop-filter:blur(14px);z-index:45;
+  }
+  .brand{display:none}
+  .nav{flex-direction:row;gap:2px;flex:1;overflow-x:auto;scrollbar-width:none}
+  .nav::-webkit-scrollbar{display:none}
+  .nav button{
+    position:relative;flex:0 0 auto;flex-direction:column;justify-content:center;gap:3px;
+    min-width:58px;padding:7px 8px;border-radius:12px;
+  }
+  .nav button .ni{font-size:19px;line-height:1}
+  .nav button .nl{font-size:9.5px;font-weight:700;letter-spacing:-.01em}
+  .nav button.active::before{display:none}
+  .nav button.active{color:#fff;background:var(--grad-soft);box-shadow:inset 0 0 0 1px var(--line-strong)}
+  .nav-badge{position:absolute;top:3px;right:9px;margin:0}
+  .sidebar-foot{padding:0 2px;border:0;flex:0 0 auto}
+  .sidebar-foot #modeBadge{display:none}
+  .fc-user-chip{margin:0;padding:5px;background:transparent;box-shadow:none;flex-direction:column;gap:2px}
+  .fc-user-mail{display:none}
+  .fc-user-av{width:26px;height:26px;font-size:12px}
+  .fc-user-out{padding:3px 7px;font-size:10px}
+  .main{margin-left:0;width:100%;padding:18px 16px 92px}
+  .top{margin-bottom:18px}
+  .top h1{font-size:22px}
+  .cards,.three,.two{grid-template-columns:1fr 1fr}
+  .hero{padding:20px}
+  .hero-value{font-size:31px}
+  .kpi .value{font-size:23px}
+  .donut{width:160px;height:160px}
+}
+@media(max-width:560px){
+  .cards,.two,.three,.form-grid{grid-template-columns:1fr}
+  .hero-tiles{grid-template-columns:1fr}
+  .top{flex-direction:column;align-items:stretch}
+  .top .btn{width:100%}
+  .top h1{font-size:20px}
+  .main{padding:16px 13px 92px}
+  .filt{min-width:calc(50% - 6px)}
+  .nav button{min-width:54px;padding:6px}
+  .nav button .nl{font-size:9px}
 }
 
 /* ---------------- Login (Fase 2) ---------------- */
@@ -349,9 +396,3 @@ input[type=file]::file-selector-button:hover{background:rgba(255,255,255,.1)}
   padding:6px 10px;border-radius:8px;font-size:12px;font-weight:700;font-family:inherit;
 }
 .fc-user-out:hover{background:rgba(251,113,133,.2)}
-@media(max-width:960px){
-  .sidebar-foot{display:block}
-  .sidebar-foot #modeBadge{display:none}
-  .fc-user-mail{display:none}
-  .fc-user-chip{flex-direction:column;gap:6px;padding:8px 6px}
-}

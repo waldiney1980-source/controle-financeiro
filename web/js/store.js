@@ -98,23 +98,35 @@ FC.Store = (function () {
     }
   }
 
+  let failCount = 0;
+  const MAX_FAILS = 4;
   async function saveRemoteNow() {
     if (!online) return;
     saving = true;
     try {
       const { error } = await sb.from("family_state").update({ data: db }).eq("id", 1);
       if (error) throw error;
-    } catch (e) {
-      console.warn("Falha ao salvar no cofre (tentando de novo):", e && e.message);
-      dirtyAgain = true;
-    } finally {
+      failCount = 0;
       saving = false;
-      if (dirtyAgain) { dirtyAgain = false; scheduleSave(); }
+      if (dirtyAgain) { dirtyAgain = false; scheduleSave(); }   // mudou de novo enquanto salvava
+    } catch (e) {
+      saving = false;
+      dirtyAgain = false;
+      failCount++;
+      saveLocal();   // guarda no aparelho como backup
+      if (failCount <= MAX_FAILS) {
+        console.warn(`Falha ao salvar no cofre (tentativa ${failCount}/${MAX_FAILS}):`, e && e.message);
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveRemoteNow, 1500 * failCount);   // espera crescente
+      } else {
+        console.warn("Sem conseguir salvar online. As mudanças ficam no aparelho até a próxima alteração.", e && e.message);
+      }
     }
   }
 
   function scheduleSave() {
     if (online) {
+      failCount = 0;   // nova alteração do usuário → volta a tentar
       if (saving) { dirtyAgain = true; return; }
       clearTimeout(saveTimer);
       saveTimer = setTimeout(saveRemoteNow, 600);
