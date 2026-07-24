@@ -380,6 +380,7 @@
         <div class="bar"><div class="fill ${lvl}" style="width:${Math.min(100, usoPct)}%"></div></div>
         <div class="hint" style="margin-top:8px">Fecha dia ${c.dia_fechamento || "—"} • vence dia ${c.dia_vencimento || "—"}</div>
         ${futuro > 0 ? `<div class="row" style="margin-top:12px"><span>🔮 Comprometido futuro</span><b class="negative">${money(futuro)}</b></div>${monthsList}` : ""}
+        <div class="row" style="border:0;padding:12px 0 0;margin-top:4px"><span></span><button class="link-danger" data-del="cards" data-del-label="cartão" data-id="${c.id}">excluir cartão</button></div>
       </div>`;
     }).join("");
   }
@@ -447,7 +448,7 @@
       const lvl = p >= 100 ? "bad" : p >= 80 ? "warn" : "good";
       return `<div style="margin-bottom:16px">
         <div class="row" style="border:0;padding:0 0 6px"><span>${c.icone} ${c.nome}</span>
-          <b>${money(gasto)} / ${money(b.limite)}</b></div>
+          <span><b>${money(gasto)} / ${money(b.limite)}</b><button class="link-danger" data-del="budgets" data-del-label="teto" data-id="${b.id}" style="margin-left:12px">excluir</button></span></div>
         <div class="bar"><div class="fill ${lvl}" style="width:${Math.min(100, p)}%"></div></div>
       </div>`;
     }).join("");
@@ -464,6 +465,7 @@
         <div class="row" style="border:0;padding:4px 0"><span>${money(g.valor_atual)}</span><b>${money(g.valor_alvo)}</b></div>
         <div class="bar"><div class="fill good" style="width:${Math.min(100, p)}%"></div></div>
         <div class="hint" style="margin-top:8px">${pct(p)} concluído${g.prazo ? " • até " + fmtDate(g.prazo) : ""}</div>
+        <div class="row" style="border:0;padding:12px 0 0"><span></span><button class="link-danger" data-del="goals" data-del-label="meta" data-id="${g.id}">excluir meta</button></div>
       </div>`;
     }).join("");
   }
@@ -809,7 +811,8 @@
       }
       const del = e.target.closest("[data-del]");
       if (del) {
-        if (confirm("Excluir este lançamento?")) {
+        const label = del.dataset.delLabel || "lançamento";
+        if (confirm(`Excluir este ${label}? Esta ação não pode ser desfeita.`)) {
           await Store.remove(del.dataset.del, del.dataset.id);
           render();
         }
@@ -861,6 +864,9 @@
     // Exige login quando há Supabase configurado (cofre da família).
     if (FC.Auth && FC.Auth.requireLogin) await FC.Auth.requireLogin();
     await Store.init();
+    // O filtro de Pessoa já entra com o usuário logado (cada um vê o seu por padrão).
+    const eu = currentPerson();
+    if (eu) dashFilter.pessoa = eu;
     const badge = $("#modeBadge");
     badge.textContent = window.FC_MODE === "online" ? "online" : "offline";
     badge.classList.toggle("online", window.FC_MODE === "online");
