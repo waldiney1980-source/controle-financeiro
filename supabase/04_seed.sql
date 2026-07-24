@@ -17,10 +17,10 @@ begin
 
   insert into categories (user_id, nome, tipo, cor, icone) values
     -- Receitas
-    (uid,'Salário','receita','#16a34a','💼'),
-    (uid,'Freelance','receita','#22c55e','🧑‍💻'),
-    (uid,'Investimentos','receita','#0ea5e9','📈'),
-    (uid,'Outras receitas','receita','#84cc16','➕'),
+    (uid,'Aluguel','receita','#22c55e','🏠'),
+    (uid,'IR','receita','#0ea5e9','🧾'),
+    (uid,'Salário Dani','receita','#16a34a','💼'),
+    (uid,'Outros','receita','#84cc16','➕'),
     -- Despesas essenciais
     (uid,'Moradia','despesa','#ef4444','🏠'),
     (uid,'Alimentação','despesa','#f97316','🍽️'),

@@ -22,11 +22,34 @@ FC.Forecast = (function () {
     return { receitas, despesas, saldo: receitas - despesas };
   }
 
-  // Saldo atual = saldo inicial das contas + receitas - despesas (todas)
+  // Saldo atual = saldo inicial das contas + lançamentos ATÉ hoje
+  // (lançamentos com data futura não entram no saldo atual)
   function currentBalance(tx, accounts) {
+    const today = new Date().toISOString().slice(0, 10);
     const base = accounts.reduce((s, a) => s + (+a.saldo_inicial || 0), 0);
-    const flow = tx.reduce((s, t) => s + (t.tipo === "receita" ? +t.valor : -+t.valor || 0), 0);
+    const flow = tx.reduce((s, t) => {
+      if (t.data > today) return s;
+      return s + (t.tipo === "receita" ? (+t.valor || 0) : -(+t.valor || 0));
+    }, 0);
     return base + flow;
+  }
+
+  // Lançamentos futuros pontuais (ex.: parcelas) agrupados por mês à frente
+  function futureOneOffByMonth(tx) {
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const baseIdx = now.getFullYear() * 12 + now.getMonth();
+    const buckets = {};
+    tx.forEach((t) => {
+      if (t.data <= todayStr) return;          // apenas futuro
+      if (t.recorrencia === "mensal") return;  // recorrentes tratados à parte
+      const d = new Date(t.data + "T00:00:00");
+      let off = (d.getFullYear() * 12 + d.getMonth()) - baseIdx;
+      if (off < 1) off = 1;                     // ainda este mês → conta no 1º passo
+      const val = t.tipo === "receita" ? (+t.valor || 0) : -(+t.valor || 0);
+      buckets[off] = (buckets[off] || 0) + val;
+    });
+    return buckets;
   }
 
   // Fluxo recorrente mensal previsto (receitas e despesas marcadas como mensal)
@@ -55,23 +78,31 @@ FC.Forecast = (function () {
   }
 
   // Projeção de saldo para uma série de meses à frente
+  // Cada mês = saldo anterior + fluxo recorrente + parcelas/compromissos daquele mês
   function projectSeries(tx, accounts, months = 12) {
     const start = currentBalance(tx, accounts);
     const { liquido } = monthlyRecurring(tx);
+    const future = futureOneOffByMonth(tx);
     const series = [];
     let saldo = start;
     for (let i = 1; i <= months; i++) {
-      saldo += liquido;
+      saldo += liquido + (future[i] || 0);
       series.push({ mes: i, saldo });
     }
     return { start, liquidoMensal: liquido, series };
   }
 
-  // Saldo projetado por horizonte de dias
+  // Saldo projetado por horizonte de dias (derivado da série mensal)
   function projectByDays(tx, accounts) {
-    const { start, liquidoMensal } = projectSeries(tx, accounts, 12);
-    const perDay = liquidoMensal / 30;
-    const at = (dias) => Math.round((start + perDay * dias) * 100) / 100;
+    const { start, series } = projectSeries(tx, accounts, 12);
+    const monthEnd = (m) => (m <= 0 ? start : series[Math.min(m, series.length) - 1].saldo);
+    const at = (dias) => {
+      const pos = dias / 30;
+      const lo = Math.floor(pos), hi = Math.ceil(pos);
+      const frac = pos - lo;
+      const v = monthEnd(lo) + (monthEnd(hi) - monthEnd(lo)) * frac;
+      return Math.round(v * 100) / 100;
+    };
     return { d30: at(30), d90: at(90), d180: at(180), d365: at(365) };
   }
 

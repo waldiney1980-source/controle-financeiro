@@ -9,68 +9,38 @@
 window.FC = window.FC || {};
 
 FC.Store = (function () {
-  const KEY = "fincontrol_ai_db_v1";
+  const KEY = "fincontrol_ai_db_v2";
   const uid = () =>
     (crypto.randomUUID && crypto.randomUUID()) ||
     "id-" + Date.now() + "-" + Math.random().toString(16).slice(2);
 
   let db = null;
 
-  // ---------- Dados de demonstração ----------
+  // ---------- Dados iniciais (SEM lançamentos fictícios) ----------
+  // Nasce só com as categorias padrão. Contas, cartões, receitas,
+  // despesas, metas e orçamentos começam vazios — você cadastra os reais.
   function seed() {
     const cats = [
-      { nome: "Salário", tipo: "receita", cor: "#16a34a", icone: "💼" },
-      { nome: "Freelance", tipo: "receita", cor: "#22c55e", icone: "🧑‍💻" },
+      // Receitas
+      { nome: "Aluguel", tipo: "receita", cor: "#22c55e", icone: "🏠" },
+      { nome: "IR", tipo: "receita", cor: "#0ea5e9", icone: "🧾" },
+      { nome: "Salário Dani", tipo: "receita", cor: "#16a34a", icone: "💼" },
+      { nome: "Outros", tipo: "receita", cor: "#84cc16", icone: "➕" },
+      // Despesas
       { nome: "Moradia", tipo: "despesa", cor: "#ef4444", icone: "🏠" },
       { nome: "Alimentação", tipo: "despesa", cor: "#f97316", icone: "🍽️" },
       { nome: "Transporte", tipo: "despesa", cor: "#eab308", icone: "🚗" },
       { nome: "Saúde", tipo: "despesa", cor: "#ec4899", icone: "⚕️" },
+      { nome: "Educação", tipo: "despesa", cor: "#8b5cf6", icone: "📚" },
+      { nome: "Contas/Utilidades", tipo: "despesa", cor: "#06b6d4", icone: "💡" },
       { nome: "Lazer", tipo: "despesa", cor: "#f43f5e", icone: "🎮" },
       { nome: "Assinaturas", tipo: "despesa", cor: "#a855f7", icone: "📺" },
-      { nome: "Contas/Utilidades", tipo: "despesa", cor: "#06b6d4", icone: "💡" },
+      { nome: "Compras", tipo: "despesa", cor: "#14b8a6", icone: "🛍️" },
+      { nome: "Cartão de crédito", tipo: "despesa", cor: "#64748b", icone: "💳" },
       { nome: "Outras despesas", tipo: "despesa", cor: "#6b7280", icone: "📦" }
-    ].map((c) => ({ id: uid(), ...c }));
+    ].map((c) => ({ id: uid(), parent_id: null, ...c }));
 
-    const catId = (n) => cats.find((c) => c.nome === n).id;
-
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = today.getMonth();
-    const d = (day) => new Date(y, m, day).toISOString().slice(0, 10);
-
-    const accounts = [
-      { id: uid(), nome: "Conta Corrente", tipo: "corrente", banco: "Banco X", numero_mascarado: "**** 1234", saldo_inicial: 3200, ativa: true }
-    ];
-    const cards = [
-      { id: uid(), nome: "Cartão Principal", bandeira: "Visa", numero_mascarado: "**** 5678", limite: 6000, dia_fechamento: 20, dia_vencimento: 28 }
-    ];
-
-    const tx = [
-      { descricao: "Salário", valor: 7500, tipo: "receita", data: d(5), category_id: catId("Salário"), recorrencia: "mensal", forma: "conta", account_id: accounts[0].id },
-      { descricao: "Projeto freelance", valor: 1200, tipo: "receita", data: d(12), category_id: catId("Freelance"), recorrencia: "nenhuma", forma: "conta", account_id: accounts[0].id },
-      { descricao: "Aluguel", valor: 2200, tipo: "despesa", data: d(6), category_id: catId("Moradia"), recorrencia: "mensal", forma: "conta", account_id: accounts[0].id },
-      { descricao: "Supermercado", valor: 850, tipo: "despesa", data: d(8), category_id: catId("Alimentação"), recorrencia: "nenhuma", forma: "cartao", card_id: cards[0].id, estabelecimento: "Mercado Bom Preço" },
-      { descricao: "Combustível", valor: 320, tipo: "despesa", data: d(10), category_id: catId("Transporte"), recorrencia: "nenhuma", forma: "cartao", card_id: cards[0].id, estabelecimento: "Posto Shell" },
-      { descricao: "Plano de saúde", valor: 480, tipo: "despesa", data: d(9), category_id: catId("Saúde"), recorrencia: "mensal", forma: "conta", account_id: accounts[0].id },
-      { descricao: "Cinema + jantar", valor: 210, tipo: "despesa", data: d(14), category_id: catId("Lazer"), recorrencia: "nenhuma", forma: "cartao", card_id: cards[0].id, estabelecimento: "Shopping" },
-      { descricao: "Streaming", valor: 55, tipo: "despesa", data: d(15), category_id: catId("Assinaturas"), recorrencia: "mensal", forma: "cartao", card_id: cards[0].id, estabelecimento: "Netflix" },
-      { descricao: "Energia elétrica", valor: 240, tipo: "despesa", data: d(11), category_id: catId("Contas/Utilidades"), recorrencia: "mensal", forma: "conta", account_id: accounts[0].id },
-      { descricao: "Restaurante", valor: 130, tipo: "despesa", data: d(16), category_id: catId("Alimentação"), recorrencia: "nenhuma", forma: "cartao", card_id: cards[0].id, estabelecimento: "Outback" }
-    ].map((t) => ({ id: uid(), conciliada: false, ...t }));
-
-    const budgets = [
-      { id: uid(), category_id: catId("Alimentação"), limite: 1200 },
-      { id: uid(), category_id: catId("Transporte"), limite: 500 },
-      { id: uid(), category_id: catId("Lazer"), limite: 400 },
-      { id: uid(), category_id: catId("Assinaturas"), limite: 150 }
-    ];
-
-    const goals = [
-      { id: uid(), nome: "Reserva de emergência", valor_alvo: 30000, valor_atual: 12000, prazo: `${y + 1}-06-30`, status: "ativa" },
-      { id: uid(), nome: "Viagem", valor_alvo: 8000, valor_atual: 2500, prazo: `${y}-12-20`, status: "ativa" }
-    ];
-
-    return { categories: cats, accounts, cards, transactions: tx, budgets, goals };
+    return { categories: cats, accounts: [], cards: [], transactions: [], budgets: [], goals: [], bills: [] };
   }
 
   // ---------- Persistência ----------
@@ -87,9 +57,29 @@ FC.Store = (function () {
     try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {}
   }
 
+  // Garante categorias de receita padrão sem apagar dados existentes
+  function ensureIncomeCategories() {
+    const wanted = [
+      { nome: "Aluguel", cor: "#22c55e", icone: "🏠" },
+      { nome: "IR", cor: "#0ea5e9", icone: "🧾" },
+      { nome: "Salário Dani", cor: "#16a34a", icone: "💼" },
+      { nome: "Outros", cor: "#84cc16", icone: "➕" }
+    ];
+    db.categories = db.categories || [];
+    let changed = false;
+    wanted.forEach((w) => {
+      const exists = db.categories.some(
+        (c) => c.tipo === "receita" && (c.nome || "").toLowerCase() === w.nome.toLowerCase()
+      );
+      if (!exists) { db.categories.push({ id: uid(), tipo: "receita", parent_id: null, ...w }); changed = true; }
+    });
+    if (changed) save();
+  }
+
   // ---------- API pública (assíncrona) ----------
   async function init() {
     if (!db) load();
+    ensureIncomeCategories();
     return true;
   }
   async function all(collection) {
