@@ -1,0 +1,5 @@
+# Configuração do Netlify — FinControl AI
+# O site é estático e fica na pasta web/ (sem etapa de build).
+[build]
+  publish = "web"
+  command = ""
