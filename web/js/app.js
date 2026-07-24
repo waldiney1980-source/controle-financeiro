@@ -764,11 +764,15 @@
     if (typeof pdfjsLib !== "undefined") {
       pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
     }
+    // Exige login quando há Supabase configurado (cofre da família).
+    if (FC.Auth && FC.Auth.requireLogin) await FC.Auth.requireLogin();
     await Store.init();
     const badge = $("#modeBadge");
     badge.textContent = window.FC_MODE === "online" ? "online" : "offline";
     badge.classList.toggle("online", window.FC_MODE === "online");
     bind();
+    // Sincronização em tempo real: re-renderiza quando a família altera algo.
+    window.addEventListener("fc:remote", () => render());
     goto("dashboard");
     // Registra service worker (só em http/https)
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {

@@ -292,3 +292,66 @@ input[type=file]::file-selector-button:hover{background:rgba(255,255,255,.1)}
   .top h1{font-size:24px}
   .main{padding:16px}
 }
+
+/* ---------------- Login (Fase 2) ---------------- */
+.fc-auth{
+  position:fixed;inset:0;z-index:100;display:none;
+  align-items:center;justify-content:center;padding:20px;
+  background:
+    radial-gradient(900px 500px at 80% -10%, rgba(59,130,246,.22), transparent 60%),
+    radial-gradient(700px 500px at 0% 0%, rgba(139,92,246,.18), transparent 55%),
+    var(--bg);
+}
+.fc-auth.show{display:flex;animation:fade .25s ease}
+.fc-auth-box{
+  width:min(400px,100%);
+  background:linear-gradient(180deg,var(--surface),var(--surface-2));
+  border:1px solid var(--line-strong);border-radius:var(--radius-lg);
+  padding:34px 30px;box-shadow:0 40px 90px -30px rgba(0,0,0,.85);
+}
+.fc-auth-brand{font-size:26px;font-weight:800;letter-spacing:-.02em;text-align:center}
+.fc-auth-brand span{background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.fc-auth-sub{margin:6px 0 22px;text-align:center;color:var(--muted);font-size:14px}
+.fc-auth-tabs{display:flex;gap:6px;background:rgba(255,255,255,.04);padding:5px;border-radius:12px;margin-bottom:20px}
+.fc-auth-tab{
+  flex:1;border:0;background:transparent;color:var(--muted);cursor:pointer;
+  padding:10px;border-radius:9px;font-weight:700;font-size:14px;font-family:inherit;transition:.15s;
+}
+.fc-auth-tab.active{color:#fff;background:var(--grad-soft);box-shadow:inset 0 0 0 1px var(--line-strong)}
+.fc-auth-form{display:flex;flex-direction:column;gap:8px}
+.fc-auth-form label{font-size:12.5px;font-weight:700;color:var(--muted);margin-top:6px}
+.fc-auth-form input{
+  padding:13px;border:1px solid var(--line-strong);border-radius:11px;font-size:14px;font-family:inherit;
+  background:rgba(255,255,255,.03);color:var(--text);transition:.15s;
+}
+.fc-auth-form input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,.18)}
+.fc-auth-submit{margin-top:16px;width:100%;justify-content:center}
+.fc-auth-submit:disabled{opacity:.6;cursor:default;transform:none}
+.fc-auth-msg{min-height:18px;font-size:13px;font-weight:600;margin-top:10px}
+.fc-auth-msg.bad{color:var(--bad)}
+.fc-auth-msg.ok{color:var(--good)}
+.fc-auth-hint{margin:18px 0 0;text-align:center;color:var(--muted-2);font-size:12px;line-height:1.5}
+
+/* ---------------- Chip do usuário ---------------- */
+.fc-user-chip{
+  display:flex;align-items:center;gap:9px;margin-top:12px;
+  padding:9px 10px;border-radius:12px;background:rgba(255,255,255,.04);
+  box-shadow:inset 0 0 0 1px var(--line);
+}
+.fc-user-av{
+  width:30px;height:30px;flex:0 0 auto;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:13px;color:#fff;background:var(--grad);
+}
+.fc-user-mail{flex:1;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fc-user-out{
+  border:0;background:rgba(251,113,133,.12);color:var(--bad);cursor:pointer;
+  padding:6px 10px;border-radius:8px;font-size:12px;font-weight:700;font-family:inherit;
+}
+.fc-user-out:hover{background:rgba(251,113,133,.2)}
+@media(max-width:960px){
+  .sidebar-foot{display:block}
+  .sidebar-foot #modeBadge{display:none}
+  .fc-user-mail{display:none}
+  .fc-user-chip{flex-direction:column;gap:6px;padding:8px 6px}
+}

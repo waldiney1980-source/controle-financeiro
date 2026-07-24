@@ -1,10 +1,11 @@
 /* Service Worker — FinControl AI (cache offline simples) */
-const CACHE = "fincontrol-v2";
+const CACHE = "fincontrol-v3";
 const ASSETS = [
   "./index.html",
   "./css/styles.css",
   "./js/config.js",
   "./js/supabaseClient.js",
+  "./js/auth.js",
   "./js/store.js",
   "./js/forecast.js",
   "./js/app.js",
