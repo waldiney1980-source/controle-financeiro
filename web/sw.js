@@ -1,5 +1,5 @@
-/* Service Worker — FinControl AI (cache offline simples) */
-const CACHE = "fincontrol-v6";
+/* Service Worker — FinControl AI (rede primeiro, cache como reserva offline) */
+const CACHE = "fincontrol-v7";
 const ASSETS = [
   "./index.html",
   "./css/styles.css",
@@ -22,15 +22,18 @@ self.addEventListener("activate", (e) => {
   );
 });
 
+// Estratégia "rede primeiro": sempre busca a versão mais nova quando online,
+// e usa o cache só como reserva quando está offline. Assim as atualizações
+// aparecem na hora, sem ficar preso numa versão antiga.
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  // Não cacheia chamadas ao Supabase/CDN externo
-  if (url.origin !== location.origin) return;
+  // Só cuida dos arquivos do próprio app (ignora Supabase/CDN externo).
+  if (e.request.method !== "GET" || url.origin !== location.origin) return;
   e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
+    fetch(e.request).then((res) => {
       const copy = res.clone();
       caches.open(CACHE).then((c) => c.put(e.request, copy));
       return res;
-    }).catch(() => caches.match("./index.html")))
+    }).catch(() => caches.match(e.request).then((hit) => hit || caches.match("./index.html")))
   );
 });

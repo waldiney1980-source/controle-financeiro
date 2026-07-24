@@ -251,7 +251,6 @@
   function renderDashboard(tx, accounts, cards, budgets, goals, catById) {
     // KPIs globais de posição (não afetados pelos filtros)
     const ind = Forecast.indicators(tx, accounts, goals);
-    setMoney("kpiSaldo", ind.saldoAtual);
     $("#kpiPoupanca").textContent = pct(ind.taxaPoupanca);
 
     $("#kpiComprometimento").textContent = pct(ind.comprometimento);
@@ -264,9 +263,6 @@
     $("#hintReserva").textContent = `${pct(covPct)} da meta (${money(ind.reservaMeta)})`;
     $("#kpiCapacidade").textContent = money(ind.capacidadeInvestir);
 
-    const hu = $("#heroUpdated");
-    if (hu) hu.textContent = "Atualizado às " + new Date().toLocaleTimeString(cfg.LOCALE || "pt-BR", { hour: "2-digit", minute: "2-digit" });
-
     // ---- Análise filtrada (pessoa, mês, categoria, tipo) ----
     populateFilters(tx);
     const ftx = applyDashFilter(tx);
@@ -276,6 +272,15 @@
     // Tiles: ganhos e gastos do escopo filtrado
     const receitas = ftx.filter((t) => t.tipo === "receita").reduce((s, t) => s + (+t.valor || 0), 0);
     const despesas = ftx.filter((t) => t.tipo === "despesa").reduce((s, t) => s + (+t.valor || 0), 0);
+
+    // Saldo do mês = META (soma dos tetos do Orçamento) − gastos do escopo filtrado
+    const metaMes = budgets.reduce((s, b) => s + (+b.limite || 0), 0);
+    setMoney("kpiSaldo", metaMes - despesas);
+    const hu = $("#heroUpdated");
+    if (hu) hu.textContent = metaMes > 0
+      ? `Meta ${money(metaMes)} − gastos ${money(despesas)}${quem}`
+      : "Defina tetos na aba Orçamento para calcular a meta do mês";
+
     setMoney("kpiReceitas", receitas);
     setMoney("kpiDespesas", despesas);
     const lr = $("#lblReceitas"); if (lr) lr.textContent = "Ganhos • " + escopo + quem;
@@ -881,9 +886,10 @@
     // Exige login quando há Supabase configurado (cofre da família).
     if (FC.Auth && FC.Auth.requireLogin) await FC.Auth.requireLogin();
     await Store.init();
-    // O filtro de Pessoa já entra com o usuário logado (cada um vê o seu por padrão).
+    // O filtro de Pessoa entra com o usuário logado SÓ se ele já tiver
+    // lançamentos com esse nome (senão o painel apareceria vazio).
     const eu = currentPerson();
-    if (eu) dashFilter.pessoa = eu;
+    if (eu && Store.allSync("transactions").some((t) => t.pessoa === eu)) dashFilter.pessoa = eu;
     const badge = $("#modeBadge");
     badge.textContent = window.FC_MODE === "online" ? "online" : "offline";
     badge.classList.toggle("online", window.FC_MODE === "online");
