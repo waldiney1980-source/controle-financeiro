@@ -211,9 +211,12 @@ FC.Store = (function () {
   function categoryById(id) {
     return allSync("categories").find((c) => c.id === id) || null;
   }
-  function reset() {
+  async function reset() {
     db = seed();
-    scheduleSave();
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    saveLocal();                       // grava o estado zerado localmente
+    if (online) { failCount = 0; await saveRemoteNow(); }  // e no cofre (aguarda concluir)
+    return true;
   }
 
   return { init, all, allSync, add, update, remove, categoryById, reset, get mode() { return window.FC_MODE; } };

@@ -843,6 +843,23 @@
       dashFilter.pessoa = dashFilter.mes = dashFilter.categoria = dashFilter.tipo = "";
       render();
     });
+
+    // Apagar todos os dados (zona de perigo)
+    const wipe = $("#wipeAll");
+    if (wipe) wipe.addEventListener("click", async () => {
+      const st = $("#wipeStatus");
+      if (window.FC_MODE !== "online") {
+        if (st) st.innerHTML = '<span style="color:var(--warn)">⚠️ Você está em modo offline. Entre na sua conta (online) antes de apagar, senão os dados voltam ao recarregar.</span>';
+        return;
+      }
+      if (!confirm("Tem certeza? Isso apaga TODOS os lançamentos, cartões, contas, orçamentos e metas de TODA a família.\n\nAs categorias são mantidas. Esta ação NÃO pode ser desfeita.")) return;
+      if (!confirm("Confirmação final: apagar tudo mesmo?")) return;
+      if (st) st.textContent = "Apagando…";
+      await Store.reset();
+      dashFilter.pessoa = dashFilter.mes = dashFilter.categoria = dashFilter.tipo = "";
+      render();
+      if (st) st.innerHTML = '<span style="color:var(--good)">✅ Tudo apagado! O cofre da família começou do zero.</span>';
+    });
     const billsTable = $("#billsTable");
     if (billsTable) billsTable.addEventListener("change", async (e) => {
       const paid = e.target.closest(".bill-paid");
