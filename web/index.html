@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+<canvas id="bgCanvas" aria-hidden="true"></canvas>
 <div class="app">
   <!-- Sidebar -->
   <aside class="sidebar">
@@ -201,6 +202,14 @@
         </div>
       </div>
 
+      <!-- Personalização: foto de fundo -->
+      <div class="card section">
+        <div class="section-title">🎨 Aparência — foto de fundo</div>
+        <p class="hint">Escolha uma foto sua para aparecer <b>bem discreta</b> no fundo do app. Fica salva só neste aparelho.</p>
+        <input type="file" id="bgPhoto" accept="image/*">
+        <div><button class="btn secondary tiny" id="bgRemove" type="button" style="margin-top:12px">Remover foto de fundo</button></div>
+      </div>
+
       <!-- Zona de perigo: apagar tudo -->
       <div class="card section" style="border-color:rgba(251,113,133,.35)">
         <div class="section-title" style="color:var(--bad)">⚠️ Apagar todos os dados</div>
@@ -233,6 +242,7 @@
 <!-- Supabase JS (usado quando config.js estiver preenchido) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/config.js"></script>
+<script src="js/bg.js"></script>
 <script src="js/supabaseClient.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/store.js"></script>

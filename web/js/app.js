@@ -377,6 +377,12 @@
         const nome = new Date(+y, +m - 1, 1).toLocaleDateString(cfg.LOCALE || "pt-BR", { month: "short", year: "2-digit" });
         return `<div class="row" style="padding:8px 0"><span class="muted">${nome}</span><b>${money(byMonth[k])}</b></div>`;
       }).join("");
+      const txRows = cardTx.slice().sort((a, b) => (b.data || "").localeCompare(a.data || "")).map((t) =>
+        `<div class="ctx-row">
+          <span class="ctx-desc"><b>${t.descricao}</b><small>${fmtDate(t.data)}</small></span>
+          <input class="ctx-val" type="number" step="0.01" min="0" value="${(+t.valor || 0)}" data-tx="${t.id}" aria-label="valor do lançamento">
+          <button class="link-danger ctx-del" data-del="transactions" data-del-label="lançamento" data-id="${t.id}" title="Excluir">✕</button>
+        </div>`).join("");
       return `<div class="card">
         <div class="section-title">💳 ${c.nome}</div>
         <div class="muted">${c.bandeira || ""} ${c.numero_mascarado ? "• " + c.numero_mascarado : ""}</div>
@@ -385,6 +391,7 @@
         <div class="bar"><div class="fill ${lvl}" style="width:${Math.min(100, usoPct)}%"></div></div>
         <div class="hint" style="margin-top:8px">Fecha dia ${c.dia_fechamento || "—"} • vence dia ${c.dia_vencimento || "—"}</div>
         ${futuro > 0 ? `<div class="row" style="margin-top:12px"><span>🔮 Comprometido futuro</span><b class="negative">${money(futuro)}</b></div>${monthsList}` : ""}
+        ${cardTx.length ? `<div class="ctx-title">Lançamentos deste cartão — toque no valor para editar</div><div class="ctx-list">${txRows}</div>` : ""}
         <div class="row" style="border:0;padding:12px 0 0;margin-top:4px"><span></span><button class="link-danger" data-del="cards" data-del-label="cartão" data-id="${c.id}">excluir cartão</button></div>
       </div>`;
     }).join("");
@@ -849,6 +856,15 @@
       render();
     });
 
+    // Foto de fundo (aparência)
+    const bgPhoto = $("#bgPhoto");
+    if (bgPhoto) bgPhoto.addEventListener("change", (e) => {
+      const f = e.target.files[0];
+      if (f && window.FC_BG) window.FC_BG.setFromFile(f);
+    });
+    const bgRemove = $("#bgRemove");
+    if (bgRemove) bgRemove.addEventListener("click", () => { if (window.FC_BG) window.FC_BG.clear(); });
+
     // Apagar todos os dados (zona de perigo)
     const wipe = $("#wipeAll");
     if (wipe) wipe.addEventListener("click", async () => {
@@ -865,6 +881,17 @@
       render();
       if (st) st.innerHTML = '<span style="color:var(--good)">✅ Tudo apagado! O cofre da família começou do zero.</span>';
     });
+    // Editar o valor de um lançamento direto no cartão
+    const cardsGrid = $("#cardsGrid");
+    if (cardsGrid) cardsGrid.addEventListener("change", async (e) => {
+      const inp = e.target.closest(".ctx-val");
+      if (inp) {
+        const v = Math.max(0, parseFloat(inp.value) || 0);
+        await Store.update("transactions", inp.dataset.tx, { valor: v });
+        render();
+      }
+    });
+
     const billsTable = $("#billsTable");
     if (billsTable) billsTable.addEventListener("change", async (e) => {
       const paid = e.target.closest(".bill-paid");
