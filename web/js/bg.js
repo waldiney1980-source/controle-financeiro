@@ -25,12 +25,14 @@
     let dw, dh;
     if (ir > cr) { dh = h; dw = h * ir; } else { dw = w; dh = w / ir; }
     const dx = (w - dw) / 2, dy = (h - dh) / 2;
-    ctx.globalAlpha = 0.10;           // bem fraca
+    ctx.globalAlpha = 0.20;           // discreta, mas visível
     ctx.drawImage(img, dx, dy, dw, dh);
     ctx.globalAlpha = 1;
   }
 
   function load(dataUrl) {
+    // Marca o <html> para o CSS clarear o fundo e a foto aparecer melhor.
+    document.documentElement.classList.toggle("fc-has-bg", !!dataUrl);
     if (!dataUrl) { img = null; draw(); return; }
     const i = new Image();
     i.onload = () => { img = i; draw(); };

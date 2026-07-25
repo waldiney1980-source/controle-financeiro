@@ -61,9 +61,10 @@
   function populateFilters(tx) {
     // Pessoas
     fillSelect($("#fPessoa"), knownPessoas().map((p) => ({ v: p, t: p })), dashFilter.pessoa, "Todos");
-    // Meses (dos lançamentos existentes, mais recentes primeiro)
-    const meses = Array.from(new Set(tx.map((t) => String(t.data || "").slice(0, 7)).filter(Boolean)))
-      .sort().reverse().map((ym) => ({ v: ym, t: mesLabel(ym) }));
+    // Meses (dos lançamentos + mês atual sempre disponível), mais recentes primeiro
+    const setMeses = new Set(tx.map((t) => String(t.data || "").slice(0, 7)).filter(Boolean));
+    setMeses.add(today().slice(0, 7));
+    const meses = Array.from(setMeses).sort().reverse().map((ym) => ({ v: ym, t: mesLabel(ym) }));
     fillSelect($("#fMes"), meses, dashFilter.mes, "Todos os meses");
     // Categorias
     const cats = Store.allSync("categories").map((c) => ({ v: c.id, t: c.icone + " " + c.nome }));
@@ -237,18 +238,19 @@
     ]);
     const catById = (id) => Store.categoryById(id);
 
-    renderDashboard(tx, accounts, cards, budgets, goals, catById);
+    renderDashboard(tx, accounts, cards, budgets, goals, catById, bills);
     renderExpenses(tx, catById);
     renderIncome(tx, catById);
     renderCards(cards, tx);
     renderBills(bills);
-    renderBudget(tx, budgets, catById);
+    renderBudget(tx, budgets, catById, bills);
     renderGoals(goals);
     renderForecast(tx, accounts, goals);
   }
 
   // ---------- Dashboard ----------
-  function renderDashboard(tx, accounts, cards, budgets, goals, catById) {
+  function renderDashboard(tx, accounts, cards, budgets, goals, catById, bills) {
+    bills = bills || [];
     // KPIs globais de posição (não afetados pelos filtros)
     const ind = Forecast.indicators(tx, accounts, goals);
     $("#kpiPoupanca").textContent = pct(ind.taxaPoupanca);
@@ -269,17 +271,28 @@
     const escopo = dashFilter.mes ? mesLabel(dashFilter.mes) : "todos os meses";
     const quem = dashFilter.pessoa ? " • " + dashFilter.pessoa : "";
 
-    // Tiles: ganhos e gastos do escopo filtrado
-    const receitas = ftx.filter((t) => t.tipo === "receita").reduce((s, t) => s + (+t.valor || 0), 0);
-    const despesas = ftx.filter((t) => t.tipo === "despesa").reduce((s, t) => s + (+t.valor || 0), 0);
+    // Contas a pagar do escopo (são da casa; entram nos gastos do mês).
+    // Não entram quando o filtro é por pessoa (conta não é de uma pessoa só).
+    const contasEscopo = dashFilter.pessoa ? [] : bills.filter((b) => {
+      if (dashFilter.tipo === "receita") return false;
+      if (dashFilter.mes && String(b.vencimento || "").slice(0, 7) !== dashFilter.mes) return false;
+      if (dashFilter.categoria && b.category_id !== dashFilter.categoria) return false;
+      return true;
+    });
 
-    // Saldo do mês = META (soma dos tetos do Orçamento) − gastos do escopo filtrado
+    // Tiles: ganhos e gastos do escopo filtrado (gastos = despesas + contas)
+    const receitas = ftx.filter((t) => t.tipo === "receita").reduce((s, t) => s + (+t.valor || 0), 0);
+    const despTx = ftx.filter((t) => t.tipo === "despesa").reduce((s, t) => s + (+t.valor || 0), 0);
+    const despContas = contasEscopo.reduce((s, b) => s + (+b.valor || 0), 0);
+    const despesas = despTx + despContas;
+
+    // Saldo do mês = META (teto do Orçamento) − gastos do mês (despesas + contas)
     const metaMes = budgets.reduce((s, b) => s + (+b.limite || 0), 0);
     setMoney("kpiSaldo", metaMes - despesas);
     const hu = $("#heroUpdated");
     if (hu) hu.textContent = metaMes > 0
       ? `Meta ${money(metaMes)} − gastos ${money(despesas)}${quem}`
-      : "Defina tetos na aba Orçamento para calcular a meta do mês";
+      : "Defina o teto na aba Orçamento para calcular a meta do mês";
 
     setMoney("kpiReceitas", receitas);
     setMoney("kpiDespesas", despesas);
@@ -289,11 +302,14 @@
 
     renderUpcoming(tx, catById);
 
-    // Rosca de despesas por categoria (respeita os filtros)
+    // Rosca de despesas por categoria (inclui despesas e contas do escopo)
     const byCat = {};
     ftx.forEach((t) => {
       if (t.tipo !== "despesa") return;
       byCat[t.category_id] = (byCat[t.category_id] || 0) + (+t.valor || 0);
+    });
+    contasEscopo.forEach((b) => {
+      byCat[b.category_id] = (byCat[b.category_id] || 0) + (+b.valor || 0);
     });
     const rows = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
     renderDonut($("#categoryChart"), rows, catById);
@@ -330,7 +346,7 @@
       const c = catById(t.category_id);
       return `<tr>
         <td>${fmtDate(t.data)}</td><td>${t.descricao}</td>
-        <td>${c ? c.icone + " " + c.nome : "—"}</td>
+        <td>${c ? c.icone + " " + c.nome : "—"}${t.detalhe ? ` <span class="muted">— ${t.detalhe}</span>` : ""}</td>
         <td>${t.pessoa || "—"}</td>
         <td>${t.forma === "cartao" ? "💳 Cartão" : "🏦 Conta"}</td>
         <td class="right negative">${money(t.valor)}</td>
@@ -441,29 +457,31 @@
     updateBillsBadge(overdue.length);
   }
 
-  // ---------- Orçamento ----------
-  function renderBudget(tx, budgets, catById) {
-    const ref = new Date();
-    const gastoCat = {};
-    tx.forEach((t) => {
-      if (t.tipo !== "despesa") return;
-      const d = new Date(t.data);
-      if (d.getMonth() !== ref.getMonth() || d.getFullYear() !== ref.getFullYear()) return;
-      gastoCat[t.category_id] = (gastoCat[t.category_id] || 0) + (+t.valor || 0);
-    });
+  // ---------- Orçamento (teto único total do mês) ----------
+  function renderBudget(tx, budgets, catById, bills) {
+    bills = bills || [];
     const wrap = $("#budgetList");
-    if (!budgets.length) { wrap.innerHTML = '<div class="empty">Nenhum teto definido. Clique em “Definir teto”.</div>'; return; }
-    wrap.innerHTML = budgets.map((b) => {
-      const c = catById(b.category_id) || { nome: "—", icone: "📦", cor: "#94a3b8" };
-      const gasto = gastoCat[b.category_id] || 0;
-      const p = b.limite > 0 ? (gasto / b.limite) * 100 : 0;
-      const lvl = p >= 100 ? "bad" : p >= 80 ? "warn" : "good";
-      return `<div style="margin-bottom:16px">
-        <div class="row" style="border:0;padding:0 0 6px"><span>${c.icone} ${c.nome}</span>
-          <span><b>${money(gasto)} / ${money(b.limite)}</b><button class="link-danger" data-del="budgets" data-del-label="teto" data-id="${b.id}" style="margin-left:12px">excluir</button></span></div>
-        <div class="bar"><div class="fill ${lvl}" style="width:${Math.min(100, p)}%"></div></div>
-      </div>`;
-    }).join("");
+    const teto = budgets.reduce((s, b) => s + (+b.limite || 0), 0);
+    if (!teto) { wrap.innerHTML = '<div class="empty">Nenhum teto definido. Clique em “Definir teto mensal” — ele vale para todas as categorias juntas.</div>'; return; }
+
+    // Gasto do mês atual = despesas (transações) + contas a pagar do mês
+    const mesAtual = today().slice(0, 7);
+    const gastoTx = tx.filter((t) => t.tipo === "despesa" && String(t.data || "").slice(0, 7) === mesAtual)
+      .reduce((s, t) => s + (+t.valor || 0), 0);
+    const gastoContas = bills.filter((b) => String(b.vencimento || "").slice(0, 7) === mesAtual)
+      .reduce((s, b) => s + (+b.valor || 0), 0);
+    const gasto = gastoTx + gastoContas;
+    const p = teto > 0 ? (gasto / teto) * 100 : 0;
+    const lvl = p >= 100 ? "bad" : p >= 80 ? "warn" : "good";
+    const restante = teto - gasto;
+    wrap.innerHTML = `
+      <div class="row" style="border:0;padding:0 0 6px"><span>Teto mensal (todas as categorias)</span><b>${money(teto)}</b></div>
+      <div class="row" style="border:0;padding:0 0 6px"><span>Gasto no mês (despesas + contas)</span><b class="${restante < 0 ? "negative" : ""}">${money(gasto)}</b></div>
+      <div class="bar"><div class="fill ${lvl}" style="width:${Math.min(100, p)}%"></div></div>
+      <div class="hint" style="margin-top:10px">${restante >= 0
+        ? `Ainda cabe <b>${money(restante)}</b> este mês (${pct(Math.max(0, 100 - p))} livre).`
+        : `Você passou <b>${money(-restante)}</b> do teto este mês.`}</div>
+      <div style="margin-top:16px"><button class="link-danger" data-del="budgets" data-del-label="teto" data-id="${budgets[0].id}">remover teto</button></div>`;
   }
 
   // ---------- Metas ----------
@@ -509,6 +527,7 @@
       { name: "valor", label: "Valor (R$)", type: "number", req: true },
       { name: "data", label: "Data", type: "date", value: today() },
       { name: "category_id", label: "Categoria", type: "select", options: cats.filter(c => c.tipo === "despesa").map(c => ({ v: c.id, t: c.icone + " " + c.nome })) },
+      { name: "detalhe", label: "Especifique o gasto (categoria Outros)", type: "text", full: true },
       { name: "pessoa", label: "Quem lançou", type: "text", list: "pessoasList", value: currentPerson() },
       { name: "forma", label: "Forma", type: "select", options: [{ v: "conta", t: "🏦 Conta" }, { v: "cartao", t: "💳 Cartão" }] },
       { name: "recorrencia", label: "Recorrência", type: "select", options: [{ v: "nenhuma", t: "Única" }, { v: "mensal", t: "🔁 Mensal" }] },
@@ -530,9 +549,8 @@
       { name: "dia_fechamento", label: "Dia fechamento", type: "number" },
       { name: "dia_vencimento", label: "Dia vencimento", type: "number" }
     ],
-    budget: (cats) => [
-      { name: "category_id", label: "Categoria", type: "select", full: true, options: cats.filter(c => c.tipo === "despesa").map(c => ({ v: c.id, t: c.icone + " " + c.nome })) },
-      { name: "limite", label: "Teto mensal (R$)", type: "number", req: true }
+    budget: () => [
+      { name: "limite", label: "Teto mensal total — vale para todas as categorias (R$)", type: "number", full: true, req: true }
     ],
     goal: () => [
       { name: "nome", label: "Nome", type: "text", full: true, req: true },
@@ -567,7 +585,7 @@
       return;
     }
     modalKind = kind;
-    const titles = { expense: "Nova despesa", income: "Nova receita", card: "Novo cartão", installment: "Compra parcelada no cartão", bill: "Nova conta a pagar", budget: "Definir teto", goal: "Nova meta" };
+    const titles = { expense: "Nova despesa", income: "Nova receita", card: "Novo cartão", installment: "Compra parcelada no cartão", bill: "Nova conta a pagar", budget: "Teto mensal total", goal: "Nova meta" };
     $("#modalTitle").textContent = titles[kind] || "Novo";
     const fields = fieldsFor[kind](cats, cards);
     $("#modalForm").innerHTML = fields.map((f) => {
@@ -580,6 +598,21 @@
       const list = f.list ? ` list="${f.list}"` : "";
       return `<div class="${wrap}"><label>${f.label}</label><input name="${f.name}" type="${f.type}"${val}${list}${f.req ? " required" : ""}></div>`;
     }).join("");
+
+    // Campo "Especifique" só aparece quando a categoria for "Outros/Outras".
+    const form = $("#modalForm");
+    const detEl = form.querySelector('[name="detalhe"]');
+    if (detEl) {
+      const detWrap = detEl.closest(".field");
+      const catSel = form.querySelector('select[name="category_id"]');
+      const upd = () => {
+        const opt = catSel && catSel.options[catSel.selectedIndex];
+        const isOutros = /outros|outras/i.test(opt ? opt.textContent : "");
+        detWrap.style.display = isOutros ? "" : "none";
+      };
+      if (catSel) catSel.addEventListener("change", upd);
+      upd();
+    }
     modal.classList.add("show");
   }
   function closeModal() { modal.classList.remove("show"); modalKind = null; }
@@ -620,7 +653,11 @@
       if (!data.descricao || !data.valor) { alert("Preencha descrição e valor."); return; }
       await Store.add("bills", { ...data, paga: false });
     } else if (modalKind === "budget") {
-      await Store.add("budgets", data);
+      if (!data.limite) { alert("Informe o teto mensal."); return; }
+      // Teto único: remove os anteriores e grava só um (vale para todas as categorias).
+      const atuais = Store.allSync("budgets");
+      for (const b of atuais) await Store.remove("budgets", b.id);
+      await Store.add("budgets", { limite: data.limite, competencia: today().slice(0, 7) });
     } else if (modalKind === "goal") {
       await Store.add("goals", { ...data, status: "ativa" });
     }
@@ -913,6 +950,8 @@
     // Exige login quando há Supabase configurado (cofre da família).
     if (FC.Auth && FC.Auth.requireLogin) await FC.Auth.requireLogin();
     await Store.init();
+    // O dashboard abre no MÊS ATUAL (para "Meta − gastos do mês" fazer sentido).
+    dashFilter.mes = today().slice(0, 7);
     // O filtro de Pessoa entra com o usuário logado SÓ se ele já tiver
     // lançamentos com esse nome (senão o painel apareceria vazio).
     const eu = currentPerson();

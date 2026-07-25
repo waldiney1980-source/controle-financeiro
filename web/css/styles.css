@@ -42,6 +42,10 @@ body{
 }
 #bgCanvas{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none}
 .app{display:flex;min-height:100vh;position:relative;z-index:1}
+/* Quando há foto de fundo, clareia o escuro para a imagem aparecer melhor */
+:root.fc-has-bg body{background-color:#132038}
+:root.fc-has-bg .sidebar{background:linear-gradient(180deg,rgba(19,32,56,.72),rgba(15,23,42,.72))}
+:root.fc-has-bg .card{background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.03))}
 
 /* ---------------- Sidebar ---------------- */
 .sidebar{
