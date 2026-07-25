@@ -275,7 +275,7 @@
     // Não entram quando o filtro é por pessoa (conta não é de uma pessoa só).
     const contasEscopo = dashFilter.pessoa ? [] : bills.filter((b) => {
       if (dashFilter.tipo === "receita") return false;
-      if (dashFilter.mes && String(b.vencimento || "").slice(0, 7) !== dashFilter.mes) return false;
+      if (dashFilter.mes && !contaNoMes(b, dashFilter.mes)) return false;
       if (dashFilter.categoria && b.category_id !== dashFilter.categoria) return false;
       return true;
     });
@@ -414,6 +414,12 @@
   }
 
   // ---------- Contas a pagar ----------
+  // Uma conta "mensal" vale do vencimento em diante (todo mês); "única" só no mês do vencimento.
+  function contaNoMes(b, ym) {
+    const venc = String(b.vencimento || "").slice(0, 7);
+    if (!venc) return false;
+    return b.recorrencia === "mensal" ? venc <= ym : venc === ym;
+  }
   function daysOverdue(venc) {
     const t = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00");
     const v = new Date(venc + "T00:00:00");
@@ -446,7 +452,7 @@
         : dOver >= 0 ? `<span class="badge warn">${dOver === 0 ? "Vence hoje" : "Atrasada " + dOver + "d"}</span>`
         : `<span class="badge warn">Vence em ${-dOver}d</span>`;
       return `<tr class="${late ? "bill-late" : ""}">
-        <td>${b.descricao}</td>
+        <td>${b.descricao}${b.recorrencia === "mensal" ? ' <span class="badge warn">🔁 Mensal</span>' : ""}</td>
         <td><select class="bill-cat" data-id="${b.id}">${options}</select></td>
         <td>${b.vencimento ? fmtDate(b.vencimento) : "—"}</td>
         <td class="right negative">${money(b.valor)}</td>
@@ -468,7 +474,7 @@
     const mesAtual = today().slice(0, 7);
     const gastoTx = tx.filter((t) => t.tipo === "despesa" && String(t.data || "").slice(0, 7) === mesAtual)
       .reduce((s, t) => s + (+t.valor || 0), 0);
-    const gastoContas = bills.filter((b) => String(b.vencimento || "").slice(0, 7) === mesAtual)
+    const gastoContas = bills.filter((b) => contaNoMes(b, mesAtual))
       .reduce((s, b) => s + (+b.valor || 0), 0);
     const gasto = gastoTx + gastoContas;
     const p = teto > 0 ? (gasto / teto) * 100 : 0;
@@ -570,7 +576,8 @@
       { name: "descricao", label: "Descrição da conta", type: "text", full: true, req: true },
       { name: "valor", label: "Valor (R$)", type: "number", req: true },
       { name: "vencimento", label: "Data de vencimento", type: "date", value: today() },
-      { name: "category_id", label: "Categoria", type: "select", full: true, options: cats.filter((c) => c.tipo === "despesa").map((c) => ({ v: c.id, t: c.icone + " " + c.nome })) }
+      { name: "recorrencia", label: "Recorrência", type: "select", options: [{ v: "nenhuma", t: "Única" }, { v: "mensal", t: "🔁 Mensal (repete todo mês)" }] },
+      { name: "category_id", label: "Categoria", type: "select", options: cats.filter((c) => c.tipo === "despesa").map((c) => ({ v: c.id, t: c.icone + " " + c.nome })) }
     ]
   };
 
