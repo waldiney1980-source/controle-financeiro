@@ -269,7 +269,7 @@
     e.textContent = hideBal ? "R$ ••••••" : e.dataset.real;
   }
   function applyHide() {
-    ["kpiSaldo", "kpiReceitas", "kpiDespesas"].forEach((id) => {
+    ["kpiSaldo", "kpiReceitas", "kpiDespesas", "kpiMediaDia", "kpiPorDia"].forEach((id) => {
       const e = $("#" + id); if (e && e.dataset.real) e.textContent = hideBal ? "R$ ••••••" : e.dataset.real;
     });
     const eye = $("#toggleBalance"); if (eye) eye.textContent = hideBal ? "🙈" : "👁️";
@@ -292,6 +292,80 @@
       linha("📌", "Contas a pagar", contas) +
       `<div class="row" style="border-top:1px solid var(--line-strong);margin-top:4px">
          <span><b>Total de gastos</b></span><b class="negative">${money(total)}</b></div>`;
+  }
+
+  // ---------- Gasto dia a dia ----------
+  // Barra por dia do mês, somando despesa (conta e cartão) e conta a pagar
+  // que vence naquele dia. É a pergunta "quanto saiu hoje, e ontem?".
+  function renderDiaADia(tx, bills, ym) {
+    const wrap = $("#dailyChart"); if (!wrap) return;
+    const Bl = FC.Bills;
+    const nDias = Bl.diasNoMes(ym);
+    const hoje = today();
+    const ehMesCorrente = ym === hoje.slice(0, 7);
+    const diaHoje = ehMesCorrente ? +hoje.slice(8, 10) : (ym < hoje.slice(0, 7) ? nDias : 0);
+
+    const porDia = new Array(nDias + 1).fill(0);
+    ocorrenciasTx(tx, ym, ym).forEach((t) => {
+      if (t.tipo !== "despesa") return;
+      const d = +String(t.data || "").slice(8, 10);
+      if (d >= 1 && d <= nDias) porDia[d] += +t.valor || 0;
+    });
+    Bl.ocorrenciasDoMes(bills, ym).forEach((o) => {
+      const d = +String(o.venc || "").slice(8, 10);
+      if (d >= 1 && d <= nDias) porDia[d] += o.valor;
+    });
+
+    const total = porDia.reduce((s, v) => s + v, 0);
+    if (!total) {
+      wrap.innerHTML = `<div class="empty">Nenhum gasto registrado em ${mesLabel(ym)}.</div>`;
+      return;
+    }
+    const diasCorridos = Math.max(1, Math.min(diaHoje || nDias, nDias));
+    const media = total / diasCorridos;
+    const maiorDia = porDia.indexOf(Math.max(...porDia));
+
+    // Barras
+    const W = 720, H = 150, padT = 8, padB = 18;
+    const plotH = H - padT - padB;
+    const maxV = Math.max(...porDia, 1);
+    const passo = W / nDias;
+    const larg = Math.max(3, passo - 3);
+    const barras = porDia.map((v, d) => {
+      if (d === 0) return "";
+      const h = v > 0 ? Math.max(2, (v / maxV) * plotH) : 0;
+      const x = (d - 1) * passo + (passo - larg) / 2;
+      const y = padT + plotH - h;
+      // Azul é o normal. Vermelho fica só para o maior dia do mês — pintar
+      // tudo que passa da média deixaria o mês inteiro vermelho, já que a
+      // média divide por todos os dias, inclusive os sem gasto nenhum.
+      const cor = d === diaHoje ? "#a78bfa" : (d === maiorDia ? "#f87171" : "#60a5fa");
+      const op = ehMesCorrente && d > diaHoje ? 0.32 : 1;   // futuro em tom fraco
+      return h
+        ? `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${larg.toFixed(1)}" height="${h.toFixed(1)}" rx="2.5" fill="${cor}" opacity="${op}"><title>Dia ${d}: ${money(v)}</title></rect>`
+        : "";
+    }).join("");
+    // Rótulos a cada 5 dias, mais o último
+    const marcas = [];
+    for (let d = 1; d <= nDias; d += 5) marcas.push(d);
+    if (marcas[marcas.length - 1] !== nDias) marcas.push(nDias);
+    const rotulos = marcas.map((d) =>
+      `<text x="${((d - 1) * passo + passo / 2).toFixed(1)}" y="${H - 5}" text-anchor="middle" font-size="10" fill="#8ba0c0">${d}</text>`).join("");
+    const linhaMedia = padT + plotH - (media / maxV) * plotH;
+
+    wrap.innerHTML = `
+      <div class="dia-resumo">
+        <div><small>Total de ${mesLabel(ym)}</small><b class="negative">${money(total)}</b></div>
+        <div><small>Média por dia</small><b>${money(media)}</b></div>
+        <div><small>Maior gasto</small><b>dia ${maiorDia} • ${money(porDia[maiorDia])}</b></div>
+      </div>
+      <div class="dia-chart">
+        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gasto por dia em ${mesLabel(ym)}">
+          <line x1="0" x2="${W}" y1="${linhaMedia.toFixed(1)}" y2="${linhaMedia.toFixed(1)}"
+                stroke="rgba(255,255,255,.28)" stroke-dasharray="4 5"/>
+          ${barras}${rotulos}
+        </svg>
+      </div>`;
   }
 
   // ---------- Meta de gastos do mês ----------
@@ -421,7 +495,6 @@
     $("#kpiReserva").textContent = money(ind.reservaAtual);
     const covPct = ind.reservaMeta > 0 ? (ind.reservaAtual / ind.reservaMeta) * 100 : 0;
     $("#hintReserva").textContent = `${pct(covPct)} da meta (${money(ind.reservaMeta)})`;
-    $("#kpiCapacidade").textContent = money(ind.capacidadeInvestir);
 
     // ---- Análise filtrada (pessoa, mês, categoria, tipo) ----
     populateFilters(tx, bills);
@@ -465,7 +538,32 @@
     // `despesas` já traz conta E cartão (todo gasto no cartão é uma despesa
     // com forma "cartao") mais as contas a pagar — por isso não se soma o
     // cartão de novo aqui, senão ele contaria duas vezes.
-    setMoney("kpiSaldo", receitas - despesas);
+    const disponivel = receitas - despesas;
+    setMoney("kpiSaldo", disponivel);
+
+    // Ritmo do mês: quanto já saiu por dia e quanto ainda cabe por dia.
+    // Num mês futuro nada foi gasto ainda, então "por dia" divide o mês todo.
+    const Bl = FC.Bills;
+    const mesRitmo = dashFilter.mes || ateYm;
+    const hojeStr = today();
+    const nDias = Bl.diasNoMes(mesRitmo);
+    const ehCorrente = mesRitmo === hojeStr.slice(0, 7);
+    const passou = mesRitmo < hojeStr.slice(0, 7);
+    const diaAtual = ehCorrente ? +hojeStr.slice(8, 10) : (passou ? nDias : 0);
+    const diasCorridos = Math.max(1, diaAtual || nDias);
+    const diasRestantes = ehCorrente ? Math.max(1, nDias - diaAtual + 1) : (passou ? 1 : nDias);
+
+    setMoney("kpiMediaDia", despesas / diasCorridos);
+    setMoney("kpiPorDia", Math.max(0, disponivel) / diasRestantes);
+    // Rótulos curtos: o mês e a pessoa já estão no subtítulo logo acima, e
+    // no celular um texto de duas linhas estica os quatro blocos.
+    const lmd = $("#lblMediaDia");
+    if (lmd) lmd.textContent = ehCorrente ? `Gasto/dia · ${diaAtual}d` : "Gasto por dia";
+    const lpd = $("#lblPorDia");
+    if (lpd) lpd.textContent = ehCorrente ? `Sobra/dia · ${diasRestantes}d` : "Sobra por dia";
+
+    const hl = $("#heroLabel");
+    if (hl) hl.textContent = disponivel < 0 ? "Faltou este mês" : "Disponível para gastar";
     const hu = $("#heroUpdated");
     if (hu) hu.textContent = `${money(receitas)} entrou − ${money(despesas)} saiu • ${escopo}${quem}`;
 
@@ -481,8 +579,8 @@
 
     setMoney("kpiReceitas", receitas);
     setMoney("kpiDespesas", despesas);
-    const lr = $("#lblReceitas"); if (lr) lr.textContent = "Ganhos • " + escopo + quem;
-    const ld = $("#lblDespesas"); if (ld) ld.textContent = "Gastos • " + escopo + quem;
+    const lr = $("#lblReceitas"); if (lr) lr.textContent = "Ganhos";
+    const ld = $("#lblDespesas"); if (ld) ld.textContent = "Gastos";
     applyHide();
 
     // Meta: sempre o MÊS INTEIRO que está sendo visto, sem os outros filtros
@@ -494,6 +592,7 @@
         .reduce((s, t) => s + (+t.valor || 0), 0) +
       FC.Bills.ocorrenciasDoMes(bills, mesMeta).reduce((s, o) => s + o.valor, 0);
     renderMeta(budgets, gastosDoMes, mesMeta);
+    renderDiaADia(tx, bills, mesMeta);
 
     renderHoje(tx, bills, catById);
     renderUpcoming(tx, catById);
