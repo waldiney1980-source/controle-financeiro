@@ -81,6 +81,21 @@
     return !!(dashFilter.pessoa || dashFilter.mes || dashFilter.categoria || dashFilter.tipo);
   }
 
+  // Mês em que o painel abre: o corrente, se tiver movimento; senão o mais
+  // próximo que tenha. Mesmo motivo do seletor de contas — quem já lançou
+  // o mês seguinte não pode abrir o app num painel zerado.
+  function mesComMovimento(tx, bills) {
+    const Bl = FC.Bills;
+    const atual = today().slice(0, 7);
+    const tem = (ym) =>
+      (tx || []).some((t) => String(t.data || "").slice(0, 7) === ym) ||
+      Bl.ocorrenciasDoMes(bills, ym).length > 0;
+    if (tem(atual)) return atual;
+    for (let i = 1; i <= 12; i++) { const f = Bl.ymAdd(atual, i); if (tem(f)) return f; }
+    for (let i = 1; i <= 24; i++) { const t = Bl.ymAdd(atual, -i); if (tem(t)) return t; }
+    return atual;
+  }
+
   // Todas as ocorrências de conta já acontecidas (para o escopo "todos os meses").
   function ocorrenciasAteHoje(bills) {
     const Bl = FC.Bills;
@@ -224,7 +239,7 @@
   }
 
   // ---------- Meta de gastos do mês ----------
-  function renderMeta(budgets, gastos) {
+  function renderMeta(budgets, gastos, ym) {
     const wrap = $("#metaMes"); if (!wrap) return;
     const meta = (budgets || []).reduce((s, b) => s + (+b.limite || 0), 0);
     if (!meta) {
@@ -237,7 +252,7 @@
     const resta = meta - gastos;
     wrap.innerHTML = `
       <div class="row" style="border:0;padding:0 0 6px"><span>Meta de gastos</span><b>${money(meta)}</b></div>
-      <div class="row" style="border:0;padding:0 0 8px"><span>Já gasto este mês</span><b class="${resta < 0 ? "negative" : ""}">${money(gastos)}</b></div>
+      <div class="row" style="border:0;padding:0 0 8px"><span>Já gasto em ${mesLabel(ym || today().slice(0, 7))}</span><b class="${resta < 0 ? "negative" : ""}">${money(gastos)}</b></div>
       <div class="bar"><div class="fill ${lvl}" style="width:${Math.min(100, Math.max(0, p))}%"></div></div>
       <div class="hint" style="margin-top:10px">${resta >= 0
         ? `Ainda cabe <b>${money(resta)}</b> (${pct(Math.max(0, 100 - p))} da meta livre).`
@@ -402,14 +417,14 @@
     const ld = $("#lblDespesas"); if (ld) ld.textContent = "Gastos • " + escopo + quem;
     applyHide();
 
-    // Meta do mês: sempre sobre o MÊS CORRENTE inteiro, independente dos
-    // filtros — uma meta mensal não muda porque você filtrou por pessoa.
-    const mesAtual = today().slice(0, 7);
+    // Meta: sempre o MÊS INTEIRO que está sendo visto, sem os outros filtros
+    // — uma meta mensal não muda porque você filtrou por pessoa ou categoria.
+    const mesMeta = dashFilter.mes || today().slice(0, 7);
     const gastosDoMes =
-      tx.filter((t) => t.tipo === "despesa" && String(t.data || "").slice(0, 7) === mesAtual)
+      tx.filter((t) => t.tipo === "despesa" && String(t.data || "").slice(0, 7) === mesMeta)
         .reduce((s, t) => s + (+t.valor || 0), 0) +
-      FC.Bills.ocorrenciasDoMes(bills, mesAtual).reduce((s, o) => s + o.valor, 0);
-    renderMeta(budgets, gastosDoMes);
+      FC.Bills.ocorrenciasDoMes(bills, mesMeta).reduce((s, o) => s + o.valor, 0);
+    renderMeta(budgets, gastosDoMes, mesMeta);
 
     renderHoje(tx, bills, catById);
     renderUpcoming(tx, catById);
@@ -538,8 +553,20 @@
   // Uma conta mensal não é UM registro pago ou não: cada mês tem seu próprio
   // vencimento, seu próprio valor e seu próprio "pagou?". A tela mostra um
   // mês por vez — as regras estão em bills.js (FC.Bills).
-  let billsMes = "";                                   // "" = mês atual
-  const mesDasContas = () => billsMes || today().slice(0, 7);
+  let billsMes = "";                                   // "" = escolher sozinho
+
+  // Nunca abrir num mês vazio existindo conta em outro. Quem planeja o mês
+  // seguinte lança tudo com vencimento à frente — abrir no mês corrente
+  // mostrava tela vazia e parecia que os dados tinham sumido.
+  function mesComContas(bills) {
+    const Bl = FC.Bills;
+    const atual = today().slice(0, 7);
+    const tem = (ym) => Bl.ocorrenciasDoMes(bills, ym).length > 0;
+    if (tem(atual)) return atual;
+    for (let i = 1; i <= 12; i++) { const f = Bl.ymAdd(atual, i); if (tem(f)) return f; }
+    for (let i = 1; i <= 24; i++) { const t = Bl.ymAdd(atual, -i); if (tem(t)) return t; }
+    return atual;
+  }
 
   function updateBillsBadge(n) {
     const b = $("#billsBadge");
@@ -564,7 +591,7 @@
   function renderBills(bills) {
     const body = $("#billsTable"); if (!body) return;
     const Bl = FC.Bills;
-    const ym = mesDasContas();
+    const ym = billsMes || mesComContas(bills);
     const hoje = today();
     const cats = Store.allSync("categories").filter((c) => c.tipo === "despesa");
 
@@ -580,7 +607,14 @@
       if (!!a.paga !== !!b.paga) return a.paga ? 1 : -1;        // não pagas primeiro
       return (a.venc || "").localeCompare(b.venc || "");
     });
-    $("#billsEmpty").classList.toggle("hidden", ocorrencias.length > 0);
+    const vazio = $("#billsEmpty");
+    vazio.classList.toggle("hidden", ocorrencias.length > 0);
+    if (!ocorrencias.length) {
+      const n = (bills || []).length;
+      vazio.innerHTML = n
+        ? `Nenhuma conta vence em ${mesLabel(ym)}. Você tem <b>${n} conta(s)</b> cadastrada(s) — troque o mês no seletor acima para vê-las.`
+        : "Nenhuma conta cadastrada. Clique em “+ Nova conta”.";
+    }
 
     // O alerta olha TODOS os meses, não só o que está na tela — uma conta
     // esquecida em maio precisa aparecer mesmo com julho selecionado.
@@ -1372,8 +1406,8 @@
     // Exige login quando há Supabase configurado (cofre da família).
     if (FC.Auth && FC.Auth.requireLogin) await FC.Auth.requireLogin();
     await Store.init();
-    // O dashboard abre no MÊS ATUAL (para "Meta − gastos do mês" fazer sentido).
-    dashFilter.mes = today().slice(0, 7);
+    // Abre no mês que tem movimento — normalmente o corrente.
+    dashFilter.mes = mesComMovimento(Store.allSync("transactions"), Store.allSync("bills"));
     // O filtro de Pessoa entra com o usuário logado SÓ se ele já tiver
     // lançamentos com esse nome (senão o painel apareceria vazio).
     // O painel abre com a casa INTEIRA. Antes ele se filtrava sozinho no
