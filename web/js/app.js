@@ -210,6 +210,19 @@
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   }
 
+  // ---------- Gastos: as três origens, somadas à vista ----------
+  function renderGastosDetalhe(conta, cartao, contas, total) {
+    const wrap = $("#gastosDetalhe"); if (!wrap) return;
+    const linha = (icone, nome, valor) => `
+      <div class="row"><span>${icone} ${nome}</span><b class="${valor ? "negative" : "muted"}">${money(valor)}</b></div>`;
+    wrap.innerHTML =
+      linha("🏦", "Despesas na conta", conta) +
+      linha("💳", "Despesas no cartão", cartao) +
+      linha("📌", "Contas a pagar", contas) +
+      `<div class="row" style="border-top:1px solid var(--line-strong);margin-top:4px">
+         <span><b>Total de gastos</b></span><b class="negative">${money(total)}</b></div>`;
+  }
+
   // ---------- Meta de gastos do mês ----------
   function renderMeta(budgets, gastos) {
     const wrap = $("#metaMes"); if (!wrap) return;
@@ -352,21 +365,28 @@
     const escopo = dashFilter.mes ? mesLabel(dashFilter.mes) : "todos os meses";
     const quem = dashFilter.pessoa ? " • " + dashFilter.pessoa : "";
 
-    // Contas a pagar do escopo (são da casa; entram nos gastos do mês).
-    // Não entram quando o filtro é por pessoa (conta não é de uma pessoa só).
+    // Contas a pagar do escopo. Conta é despesa como qualquer outra e SEMPRE
+    // entra na soma — inclusive com filtro de pessoa. Ela é da casa, não de
+    // um morador, então aparece em qualquer recorte de gastos.
     let contasEscopo = [];
-    if (!dashFilter.pessoa && dashFilter.tipo !== "receita") {
+    if (dashFilter.tipo !== "receita") {
       const ocorr = dashFilter.mes
         ? FC.Bills.ocorrenciasDoMes(bills, dashFilter.mes)
         : ocorrenciasAteHoje(bills);
       contasEscopo = ocorr.filter((o) => !dashFilter.categoria || o.category_id === dashFilter.categoria);
     }
 
-    // Tiles: ganhos e gastos do escopo filtrado (gastos = despesas + contas)
+    // Gastos = despesa na conta + despesa no cartão + contas a pagar.
+    // As duas primeiras já vêm juntas em `ftx`: toda compra no cartão é uma
+    // despesa com forma "cartao". Separamos só para poder mostrar a conta.
     const receitas = ftx.filter((t) => t.tipo === "receita").reduce((s, t) => s + (+t.valor || 0), 0);
-    const despTx = ftx.filter((t) => t.tipo === "despesa").reduce((s, t) => s + (+t.valor || 0), 0);
+    const despCartao = ftx.filter((t) => t.tipo === "despesa" && t.forma === "cartao")
+      .reduce((s, t) => s + (+t.valor || 0), 0);
+    const despConta = ftx.filter((t) => t.tipo === "despesa" && t.forma !== "cartao")
+      .reduce((s, t) => s + (+t.valor || 0), 0);
     const despContas = contasEscopo.reduce((s, o) => s + o.valor, 0);
-    const despesas = despTx + despContas;
+    const despesas = despConta + despCartao + despContas;
+    renderGastosDetalhe(despConta, despCartao, despContas, despesas);
 
     // Saldo do mês = o que entrou − o que saiu.
     // `despesas` já traz conta E cartão (todo gasto no cartão é uma despesa
@@ -1356,8 +1376,9 @@
     dashFilter.mes = today().slice(0, 7);
     // O filtro de Pessoa entra com o usuário logado SÓ se ele já tiver
     // lançamentos com esse nome (senão o painel apareceria vazio).
-    const eu = currentPerson();
-    if (eu && Store.allSync("transactions").some((t) => t.pessoa === eu)) dashFilter.pessoa = eu;
+    // O painel abre com a casa INTEIRA. Antes ele se filtrava sozinho no
+    // nome de quem entrou, e o total do mês vinha menor sem explicação.
+    // Filtrar por pessoa continua existindo — mas agora é escolha sua.
     const badge = $("#modeBadge");
     badge.textContent = window.FC_MODE === "online" ? "online" : "offline";
     badge.classList.toggle("online", window.FC_MODE === "online");
