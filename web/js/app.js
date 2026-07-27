@@ -143,10 +143,24 @@
       </div>`;
   }
 
+  // Mês abreviado para o eixo do gráfico: "Ago". Em janeiro entra o ano
+  // junto ("Jan 27"), que é onde a virada precisa ficar explícita.
+  function mesCurto(ym) {
+    const [y, m] = ym.split("-").map(Number);
+    const d = new Date(y, m - 1, 1);
+    const nome = d.toLocaleDateString(cfg.LOCALE || "pt-BR", { month: "short" })
+      .replace(".", "");
+    const cap = nome.charAt(0).toUpperCase() + nome.slice(1);
+    return m === 1 ? `${cap} ${String(y).slice(2)}` : cap;
+  }
+
+  // Passo i da projeção corresponde à competência: mês corrente + (i − 1).
+  const mesDoPasso = (i) => FC.Bills.ymAdd(today().slice(0, 7), i - 1);
+
   // ---------- Gráfico de área (fluxo de caixa) ----------
   function renderArea(container, series) {
     const n = series.length;
-    const W = 720, H = 240, padL = 12, padR = 12, padT = 20, padB = 28;
+    const W = 720, H = 246, padL = 12, padR = 12, padT = 20, padB = 40;
     const plotW = W - padL - padR, plotH = H - padT - padB;
     const vals = series.map((s) => s.saldo);
     const maxV = Math.max(...vals, 1), minV = Math.min(0, ...vals);
@@ -158,7 +172,10 @@
     const area = `${line} L ${pts[n - 1][0].toFixed(1)} ${baseY} L ${pts[0][0].toFixed(1)} ${baseY} Z`;
     const zeroY = y(0).toFixed(1);
     const dots = pts.map((p, i) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="#0b1222" stroke="#3b82f6" stroke-width="2" data-i="${i}"/>`).join("");
-    const labels = series.map((s, i) => `<text x="${x(i).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="10" fill="#8ba0c0">M${s.mes}</text>`).join("");
+    // Duas linhas por ponto: o mês de verdade em cima, o passo (M1, M2…) embaixo.
+    const labels = series.map((s, i) => `
+      <text x="${x(i).toFixed(1)}" y="${H - 22}" text-anchor="middle" font-size="10.5" font-weight="700" fill="#cbd5e1">${mesCurto(mesDoPasso(s.mes))}</text>
+      <text x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="9.5" fill="#8ba0c0">M${s.mes}</text>`).join("");
     container.innerHTML = `
       <div class="area-chart">
         <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Saldo projetado para 12 meses">
@@ -196,7 +213,7 @@
       tip.style.left = (x(i) / W) * r.width + "px";
       tip.style.top = (pts[i][1] / H) * r.height + "px";
       tip.style.opacity = "1";
-      tip.innerHTML = `<b>${money(series[i].saldo)}</b><small>Mês ${series[i].mes}</small>`;
+      tip.innerHTML = `<b>${money(series[i].saldo)}</b><small>${mesLabel(mesDoPasso(series[i].mes))} • M${series[i].mes}</small>`;
     };
     const leave = () => { tip.style.opacity = "0"; cross.setAttribute("opacity", "0"); dotEls.forEach((d) => d.setAttribute("r", "3.5")); };
     wrap.addEventListener("mousemove", move);
