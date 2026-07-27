@@ -306,7 +306,11 @@ input[type=file]::file-selector-button:hover{background:rgba(255,255,255,.1)}
 
 /* ---------------- Lançamentos editáveis do cartão ---------------- */
 .ctx-title{font-size:12px;font-weight:700;color:var(--muted);margin:16px 0 8px}
-.ctx-list{display:flex;flex-direction:column;gap:6px;max-height:230px;overflow:auto;padding-right:2px}
+/* Sem corte por altura: no iOS a barra de rolagem só aparece durante o
+   gesto, então o que ficava para baixo parecia simplesmente sumido.
+   Lista longa é encurtada no JS com um botão "ver todos". */
+.ctx-list{display:flex;flex-direction:column;gap:6px;padding-right:2px}
+.ctx-more{width:100%;margin-top:8px}
 .ctx-row{display:flex;align-items:center;gap:8px}
 .ctx-desc{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
 .ctx-desc b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

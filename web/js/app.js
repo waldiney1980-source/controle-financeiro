@@ -43,14 +43,61 @@
 
   // ---------- Filtros do dashboard ----------
   const dashFilter = { pessoa: "", mes: "", categoria: "", tipo: "" };
-  function applyDashFilter(tx) {
-    return tx.filter((t) => {
-      if (dashFilter.pessoa && (t.pessoa || "") !== dashFilter.pessoa) return false;
-      if (dashFilter.mes && String(t.data || "").slice(0, 7) !== dashFilter.mes) return false;
-      if (dashFilter.categoria && t.category_id !== dashFilter.categoria) return false;
-      if (dashFilter.tipo && t.tipo !== dashFilter.tipo) return false;
-      return true;
+
+  // Filtros que não são de mês (o mês é resolvido ao gerar as ocorrências).
+  function passaNoFiltro(t) {
+    if (dashFilter.pessoa && (t.pessoa || "") !== dashFilter.pessoa) return false;
+    if (dashFilter.categoria && t.category_id !== dashFilter.categoria) return false;
+    if (dashFilter.tipo && t.tipo !== dashFilter.tipo) return false;
+    return true;
+  }
+
+  // Intervalo que "Todos os meses" cobre: do mês mais antigo ao mais recente
+  // que tenham algo — incluindo o que foi lançado para a frente.
+  function intervaloDados(tx, bills) {
+    let min = "", max = "";
+    const marca = (ym) => {
+      if (!ym) return;
+      if (!min || ym < min) min = ym;
+      if (!max || ym > max) max = ym;
+    };
+    (tx || []).forEach((t) => marca(String(t.data || "").slice(0, 7)));
+    (bills || []).forEach((b) => marca(FC.Bills.ymDe(b.vencimento)));
+    const atual = today().slice(0, 7);
+    return min ? [min, max] : [atual, atual];
+  }
+
+  // Um lançamento marcado como MENSAL é um compromisso que se repete, não um
+  // evento único: ele vale em todo mês do intervalo, a partir do mês em que
+  // foi lançado. Antes só contava no próprio mês, então setembro aparecia
+  // zerado mesmo com salário e aluguel recorrentes cadastrados.
+  // Se o usuário lançou o mesmo compromisso à mão num mês, a linha real
+  // manda e a repetição não entra — senão contaria duas vezes.
+  function ocorrenciasTx(tx, deYm, ateYm) {
+    const Bl = FC.Bills;
+    const serie = (t) => t.tipo + "|" + chaveDesc(t.descricao) + "|" + (t.category_id || "");
+    const reais = {};
+    (tx || []).forEach((t) => {
+      const ym = String(t.data || "").slice(0, 7);
+      if (ym) reais[serie(t) + "|" + ym] = true;
     });
+
+    const out = [];
+    (tx || []).forEach((t) => {
+      const ym = String(t.data || "").slice(0, 7);
+      if (!ym) return;
+      if (ym >= deYm && ym <= ateYm) out.push({ ...t, ym, repetido: false });
+      if (t.recorrencia !== "mensal") return;
+      const inicio = ym > deYm ? ym : deYm;
+      const n = Bl.ymDiff(inicio, ateYm);
+      for (let i = 0; i <= n; i++) {
+        const alvo = Bl.ymAdd(inicio, i);
+        if (alvo <= ym) continue;                     // não repete para trás
+        if (reais[serie(t) + "|" + alvo]) continue;   // já existe lançamento real
+        out.push({ ...t, ym: alvo, data: alvo + String(t.data).slice(7), repetido: true });
+      }
+    });
+    return out;
   }
   function mesLabel(ym) {
     const [y, m] = ym.split("-");
@@ -63,13 +110,20 @@
       options.map((o) => `<option value="${o.v}">${o.t}</option>`).join("");
     sel.value = current || "";
   }
-  function populateFilters(tx) {
+  function populateFilters(tx, bills) {
+    const Bl = FC.Bills;
     // Pessoas
     fillSelect($("#fPessoa"), knownPessoas().map((p) => ({ v: p, t: p })), dashFilter.pessoa, "Todos");
-    // Meses (dos lançamentos + mês atual sempre disponível), mais recentes primeiro
-    const setMeses = new Set(tx.map((t) => String(t.data || "").slice(0, 7)).filter(Boolean));
-    setMeses.add(today().slice(0, 7));
-    const meses = Array.from(setMeses).sort().reverse().map((ym) => ({ v: ym, t: mesLabel(ym) }));
+    // Meses: do primeiro mês com movimento até 12 meses à frente. O futuro
+    // precisa estar na lista porque salário, aluguel e contas são mensais —
+    // outubro tem valor previsto mesmo sem nenhum lançamento digitado nele.
+    const [de, ate] = intervaloDados(tx, bills);
+    const atual = today().slice(0, 7);
+    const inicio = de < atual ? de : atual;
+    const fim = Bl.ymAdd(ate > atual ? ate : atual, 12);
+    const meses = [];
+    for (let ym = inicio; Bl.ymDiff(ym, fim) >= 0; ym = Bl.ymAdd(ym, 1)) meses.push({ v: ym, t: mesLabel(ym) });
+    meses.reverse();
     fillSelect($("#fMes"), meses, dashFilter.mes, "Todos os meses");
     // Categorias
     const cats = Store.allSync("categories").map((c) => ({ v: c.id, t: c.icone + " " + c.nome }));
@@ -94,19 +148,6 @@
     for (let i = 1; i <= 12; i++) { const f = Bl.ymAdd(atual, i); if (tem(f)) return f; }
     for (let i = 1; i <= 24; i++) { const t = Bl.ymAdd(atual, -i); if (tem(t)) return t; }
     return atual;
-  }
-
-  // Todas as ocorrências de conta já acontecidas (para o escopo "todos os meses").
-  function ocorrenciasAteHoje(bills) {
-    const Bl = FC.Bills;
-    const ate = today().slice(0, 7);
-    const out = [];
-    (bills || []).forEach((b) => {
-      const inicio = Bl.ymDe(b.vencimento);
-      if (!inicio || inicio > ate) return;
-      Bl.ocorrencias(b, inicio, ate).forEach((o) => out.push(o));
-    });
-    return out;
   }
 
   // ---------- Gráfico de rosca (categorias) ----------
@@ -375,34 +416,36 @@
   // ---------- Dashboard ----------
   function renderDashboard(tx, accounts, cards, budgets, goals, catById, bills) {
     bills = bills || [];
-    // KPIs globais de posição (não afetados pelos filtros)
+    // KPIs de posição que não dependem do recorte em análise
     const ind = Forecast.indicators(tx, accounts, bills, goals);
-    $("#kpiPoupanca").textContent = pct(ind.taxaPoupanca);
-
-    $("#kpiComprometimento").textContent = pct(ind.comprometimento);
-    const barC = $("#barComprometimento");
-    barC.style.width = Math.min(100, ind.comprometimento) + "%";
-    barC.className = "fill " + (ind.comprometimento >= 90 ? "bad" : ind.comprometimento >= 70 ? "warn" : "good");
-
     $("#kpiReserva").textContent = money(ind.reservaAtual);
     const covPct = ind.reservaMeta > 0 ? (ind.reservaAtual / ind.reservaMeta) * 100 : 0;
     $("#hintReserva").textContent = `${pct(covPct)} da meta (${money(ind.reservaMeta)})`;
     $("#kpiCapacidade").textContent = money(ind.capacidadeInvestir);
 
     // ---- Análise filtrada (pessoa, mês, categoria, tipo) ----
-    populateFilters(tx);
-    const ftx = applyDashFilter(tx);
-    const escopo = dashFilter.mes ? mesLabel(dashFilter.mes) : "todos os meses";
+    populateFilters(tx, bills);
     const quem = dashFilter.pessoa ? " • " + dashFilter.pessoa : "";
 
-    // Contas a pagar do escopo. Conta é despesa como qualquer outra e SEMPRE
-    // entra na soma — inclusive com filtro de pessoa. Ela é da casa, não de
-    // um morador, então aparece em qualquer recorte de gastos.
+    // O intervalo em análise. Um mês escolhido vira um intervalo de um mês;
+    // "Todos os meses" cobre do primeiro ao último mês com movimento.
+    const [deYm, ateYm] = dashFilter.mes
+      ? [dashFilter.mes, dashFilter.mes]
+      : intervaloDados(tx, bills);
+    const escopo = dashFilter.mes
+      ? mesLabel(dashFilter.mes)
+      : (deYm === ateYm ? mesLabel(deYm) : `${mesLabel(deYm)} a ${mesLabel(ateYm)}`);
+
+    // Lançamentos do intervalo, já com as recorrências repetidas mês a mês.
+    const ftx = ocorrenciasTx(tx, deYm, ateYm).filter(passaNoFiltro);
+
+    // Contas a pagar do intervalo. Conta é despesa como qualquer outra e
+    // SEMPRE entra na soma — inclusive com filtro de pessoa. Ela é da casa,
+    // não de um morador, então aparece em qualquer recorte de gastos.
     let contasEscopo = [];
     if (dashFilter.tipo !== "receita") {
-      const ocorr = dashFilter.mes
-        ? FC.Bills.ocorrenciasDoMes(bills, dashFilter.mes)
-        : ocorrenciasAteHoje(bills);
+      const ocorr = [];
+      (bills || []).forEach((b) => FC.Bills.ocorrencias(b, deYm, ateYm).forEach((o) => ocorr.push(o)));
       contasEscopo = ocorr.filter((o) => !dashFilter.categoria || o.category_id === dashFilter.categoria);
     }
 
@@ -426,6 +469,16 @@
     const hu = $("#heroUpdated");
     if (hu) hu.textContent = `${money(receitas)} entrou − ${money(despesas)} saiu • ${escopo}${quem}`;
 
+    // Taxa de poupança e comprometimento saem do MESMO recorte mostrado nos
+    // cartões acima — antes vinham só do mês corrente e contradiziam a tela.
+    const taxaPoupanca = receitas > 0 ? ((receitas - despesas) / receitas) * 100 : 0;
+    const comprometimento = receitas > 0 ? (despesas / receitas) * 100 : 0;
+    $("#kpiPoupanca").textContent = pct(taxaPoupanca);
+    $("#kpiComprometimento").textContent = pct(comprometimento);
+    const barC = $("#barComprometimento");
+    barC.style.width = Math.min(100, Math.max(0, comprometimento)) + "%";
+    barC.className = "fill " + (comprometimento >= 90 ? "bad" : comprometimento >= 70 ? "warn" : "good");
+
     setMoney("kpiReceitas", receitas);
     setMoney("kpiDespesas", despesas);
     const lr = $("#lblReceitas"); if (lr) lr.textContent = "Ganhos • " + escopo + quem;
@@ -434,9 +487,10 @@
 
     // Meta: sempre o MÊS INTEIRO que está sendo visto, sem os outros filtros
     // — uma meta mensal não muda porque você filtrou por pessoa ou categoria.
-    const mesMeta = dashFilter.mes || today().slice(0, 7);
+    const mesMeta = dashFilter.mes || ateYm;
     const gastosDoMes =
-      tx.filter((t) => t.tipo === "despesa" && String(t.data || "").slice(0, 7) === mesMeta)
+      ocorrenciasTx(tx, mesMeta, mesMeta)
+        .filter((t) => t.tipo === "despesa")
         .reduce((s, t) => s + (+t.valor || 0), 0) +
       FC.Bills.ocorrenciasDoMes(bills, mesMeta).reduce((s, o) => s + o.valor, 0);
     renderMeta(budgets, gastosDoMes, mesMeta);
@@ -466,7 +520,8 @@
     $("#recentTx").innerHTML = recent.map((t) => {
       const c = catById(t.category_id);
       const who = t.pessoa ? " • " + t.pessoa : "";
-      return `<div class="row"><span>${c ? c.icone : "•"} ${t.descricao}<div class="muted">${fmtDate(t.data)}${who}</div></span>
+      const rep = t.repetido ? ' <span class="badge warn">🔁 repete</span>' : "";
+      return `<div class="row"><span>${c ? c.icone : "•"} ${esc(t.descricao)}${rep}<div class="muted">${fmtDate(t.data)}${esc(who)}</div></span>
         <b class="${t.tipo === "receita" ? "positive" : "negative"}">${t.tipo === "receita" ? "+" : "−"} ${money(t.valor)}</b></div>`;
     }).join("") || `<div class="empty">${filtrosAtivos() ? "Nenhum lançamento com esses filtros." : "Sem lançamentos."}</div>`;
 
@@ -522,6 +577,9 @@
   }
 
   // ---------- Cartões ----------
+  const LIMITE_CARTAO = 6;                 // quantos lançamentos aparecem antes do "ver todos"
+  const cartoesAbertos = new Set();
+
   function renderCards(cards, tx) {
     const grid = $("#cardsGrid");
     $("#cardsEmpty").classList.toggle("hidden", cards.length > 0);
@@ -541,12 +599,22 @@
         const nome = new Date(+y, +m - 1, 1).toLocaleDateString(cfg.LOCALE || "pt-BR", { month: "short", year: "2-digit" });
         return `<div class="row" style="padding:8px 0"><span class="muted">${nome}</span><b>${money(byMonth[k])}</b></div>`;
       }).join("");
-      const txRows = cardTx.slice().sort((a, b) => (b.data || "").localeCompare(a.data || "")).map((t) =>
+      // Lista longa entra encurtada, com botão para abrir o resto. Nada de
+      // esconder atrás de rolagem invisível.
+      const ordenados = cardTx.slice().sort((a, b) => (b.data || "").localeCompare(a.data || ""));
+      const aberto = cartoesAbertos.has(c.id);
+      const mostrados = aberto ? ordenados : ordenados.slice(0, LIMITE_CARTAO);
+      const txRows = mostrados.map((t) =>
         `<div class="ctx-row">
-          <span class="ctx-desc"><b>${t.descricao}</b><small>${fmtDate(t.data)}</small></span>
-          <input class="ctx-val" type="number" step="0.01" min="0" value="${(+t.valor || 0)}" data-tx="${t.id}" aria-label="valor do lançamento">
+          <span class="ctx-desc"><b>${esc(t.descricao)}</b><small>${fmtDate(t.data)}</small></span>
+          <input class="ctx-val" type="number" step="0.01" min="0" value="${(+t.valor || 0)}" data-tx="${t.id}" aria-label="valor de ${esc(t.descricao)}">
           <button class="link-danger ctx-del" data-del="transactions" data-del-label="lançamento" data-id="${t.id}" title="Excluir">✕</button>
         </div>`).join("");
+      const botaoMais = ordenados.length > LIMITE_CARTAO
+        ? `<button class="btn secondary tiny ctx-more" data-card-toggle="${c.id}">${aberto
+            ? "Mostrar menos"
+            : `Ver todos os ${ordenados.length} lançamentos`}</button>`
+        : "";
       return `<div class="card">
         <div class="section-title">💳 ${c.nome}</div>
         <div class="muted">${c.bandeira || ""} ${c.numero_mascarado ? "• " + c.numero_mascarado : ""}</div>
@@ -555,7 +623,7 @@
         <div class="bar"><div class="fill ${lvl}" style="width:${Math.min(100, usoPct)}%"></div></div>
         <div class="hint" style="margin-top:8px">Fecha dia ${c.dia_fechamento || "—"} • vence dia ${c.dia_vencimento || "—"}</div>
         ${futuro > 0 ? `<div class="row" style="margin-top:12px"><span>🔮 Comprometido futuro</span><b class="negative">${money(futuro)}</b></div>${monthsList}` : ""}
-        ${cardTx.length ? `<div class="ctx-title">Lançamentos deste cartão — toque no valor para editar</div><div class="ctx-list">${txRows}</div>` : ""}
+        ${cardTx.length ? `<div class="ctx-title">Lançamentos deste cartão — toque no valor para editar</div><div class="ctx-list">${txRows}</div>${botaoMais}` : ""}
         <div class="row" style="border:0;padding:12px 0 0;margin-top:4px">
           <button class="link" data-edit="card" data-id="${c.id}">editar cartão</button>
           <button class="link-danger" data-del="cards" data-del-label="cartão" data-id="${c.id}">excluir cartão</button>
@@ -1290,6 +1358,12 @@
       }
       const ed = e.target.closest("[data-edit]");
       if (ed) openModal(ed.dataset.edit, ed.dataset.id);
+      const tog = e.target.closest("[data-card-toggle]");
+      if (tog) {
+        const id = tog.dataset.cardToggle;
+        if (cartoesAbertos.has(id)) cartoesAbertos.delete(id); else cartoesAbertos.add(id);
+        render();
+      }
       const del = e.target.closest("[data-del]");
       if (del) {
         const label = del.dataset.delLabel || "lançamento";
