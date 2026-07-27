@@ -12,7 +12,12 @@
     (+v || 0).toLocaleString(cfg.LOCALE || "pt-BR", { style: "currency", currency: cfg.MOEDA || "BRL" });
   const pct = (v) => `${(+v || 0).toFixed(0)}%`;
   const fmtDate = (s) => new Date(s + "T00:00:00").toLocaleDateString(cfg.LOCALE || "pt-BR");
-  const el = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstChild; };
+
+  // Descrição de lançamento é texto do usuário e vai parar em innerHTML:
+  // sem escapar, um "&" ou "<" no meio do nome quebra a tela.
+  const esc = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
   // ---------- Pessoa (quem lançou) ----------
   function currentPerson() {
@@ -74,6 +79,19 @@
   }
   function filtrosAtivos() {
     return !!(dashFilter.pessoa || dashFilter.mes || dashFilter.categoria || dashFilter.tipo);
+  }
+
+  // Todas as ocorrências de conta já acontecidas (para o escopo "todos os meses").
+  function ocorrenciasAteHoje(bills) {
+    const Bl = FC.Bills;
+    const ate = today().slice(0, 7);
+    const out = [];
+    (bills || []).forEach((b) => {
+      const inicio = Bl.ymDe(b.vencimento);
+      if (!inicio || inicio > ate) return;
+      Bl.ocorrencias(b, inicio, ate).forEach((o) => out.push(o));
+    });
+    return out;
   }
 
   // ---------- Gráfico de rosca (categorias) ----------
@@ -192,6 +210,70 @@
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   }
 
+  // ---------- Meta de gastos do mês ----------
+  function renderMeta(budgets, gastos) {
+    const wrap = $("#metaMes"); if (!wrap) return;
+    const meta = (budgets || []).reduce((s, b) => s + (+b.limite || 0), 0);
+    if (!meta) {
+      wrap.innerHTML = `<div class="hint">Defina quanto você pretende gastar por mês — o app avisa quando estiver perto do limite.</div>
+        <button class="btn secondary tiny" data-action="new-budget" style="margin-top:12px">Definir meta do mês</button>`;
+      return;
+    }
+    const p = (gastos / meta) * 100;
+    const lvl = p >= 100 ? "bad" : p >= 80 ? "warn" : "good";
+    const resta = meta - gastos;
+    wrap.innerHTML = `
+      <div class="row" style="border:0;padding:0 0 6px"><span>Meta de gastos</span><b>${money(meta)}</b></div>
+      <div class="row" style="border:0;padding:0 0 8px"><span>Já gasto este mês</span><b class="${resta < 0 ? "negative" : ""}">${money(gastos)}</b></div>
+      <div class="bar"><div class="fill ${lvl}" style="width:${Math.min(100, Math.max(0, p))}%"></div></div>
+      <div class="hint" style="margin-top:10px">${resta >= 0
+        ? `Ainda cabe <b>${money(resta)}</b> (${pct(Math.max(0, 100 - p))} da meta livre).`
+        : `Você passou <b>${money(-resta)}</b> da meta.`}</div>
+      <div style="margin-top:12px">
+        <button class="link" data-edit="budget" data-id="${budgets[0].id}">editar meta</button>
+        <button class="link-danger" data-del="budgets" data-del-label="meta" data-id="${budgets[0].id}">remover</button>
+      </div>`;
+  }
+
+  // ---------- Lançamentos de hoje ----------
+  function renderHoje(tx, bills, catById) {
+    const wrap = $("#todayList"); if (!wrap) return;
+    const hoje = today();
+    const itens = [];
+    (tx || []).forEach((t) => {
+      if (t.data !== hoje) return;
+      itens.push({
+        nome: t.descricao, cat: catById(t.category_id), valor: +t.valor || 0, tipo: t.tipo,
+        tag: t.forma === "cartao" ? "💳 Cartão" : (t.pessoa || "🏦 Conta")
+      });
+    });
+    FC.Bills.ocorrenciasDoMes(bills, hoje.slice(0, 7))
+      .filter((o) => o.venc === hoje)
+      .forEach((o) => {
+        itens.push({
+          nome: o.descricao, cat: catById(o.category_id), valor: o.valor, tipo: "despesa",
+          tag: o.paga ? "📌 Conta paga" : "📌 Conta vence hoje"
+        });
+      });
+
+    if (!itens.length) {
+      wrap.innerHTML = '<div class="empty">Nada lançado hoje ainda.</div>';
+      return;
+    }
+    const entrou = itens.filter((i) => i.tipo === "receita").reduce((s, i) => s + i.valor, 0);
+    const saiu = itens.filter((i) => i.tipo !== "receita").reduce((s, i) => s + i.valor, 0);
+    wrap.innerHTML = itens.map((it) => {
+      const c = it.cat || { cor: "#64748b", icone: "•", nome: "—" };
+      return `<div class="up-item">
+        <span class="up-ic" style="background:${hexA(c.cor, 0.16)};color:${c.cor}">${c.icone}</span>
+        <div class="up-main"><b>${esc(it.nome)}</b><small>${esc(c.nome)} • ${esc(it.tag)}</small></div>
+        <div class="up-right"><b class="${it.tipo === "receita" ? "positive" : "negative"}">${it.tipo === "receita" ? "+" : "−"} ${money(it.valor)}</b></div>
+      </div>`;
+    }).join("") + `
+      <div class="row" style="margin-top:10px"><span>Total de hoje</span>
+        <b class="${entrou - saiu < 0 ? "negative" : "positive"}">${money(entrou - saiu)}</b></div>`;
+  }
+
   // ---------- Próximos lançamentos ----------
   function renderUpcoming(tx, catById) {
     const wrap = $("#upcoming"); if (!wrap) return;
@@ -243,16 +325,15 @@
     renderIncome(tx, catById);
     renderCards(cards, tx);
     renderBills(bills);
-    renderBudget(tx, budgets, catById, bills);
     renderGoals(goals);
-    renderForecast(tx, accounts, goals);
+    renderForecast(tx, accounts, goals, bills);
   }
 
   // ---------- Dashboard ----------
   function renderDashboard(tx, accounts, cards, budgets, goals, catById, bills) {
     bills = bills || [];
     // KPIs globais de posição (não afetados pelos filtros)
-    const ind = Forecast.indicators(tx, accounts, goals);
+    const ind = Forecast.indicators(tx, accounts, bills, goals);
     $("#kpiPoupanca").textContent = pct(ind.taxaPoupanca);
 
     $("#kpiComprometimento").textContent = pct(ind.comprometimento);
@@ -273,26 +354,27 @@
 
     // Contas a pagar do escopo (são da casa; entram nos gastos do mês).
     // Não entram quando o filtro é por pessoa (conta não é de uma pessoa só).
-    const contasEscopo = dashFilter.pessoa ? [] : bills.filter((b) => {
-      if (dashFilter.tipo === "receita") return false;
-      if (dashFilter.mes && !contaNoMes(b, dashFilter.mes)) return false;
-      if (dashFilter.categoria && b.category_id !== dashFilter.categoria) return false;
-      return true;
-    });
+    let contasEscopo = [];
+    if (!dashFilter.pessoa && dashFilter.tipo !== "receita") {
+      const ocorr = dashFilter.mes
+        ? FC.Bills.ocorrenciasDoMes(bills, dashFilter.mes)
+        : ocorrenciasAteHoje(bills);
+      contasEscopo = ocorr.filter((o) => !dashFilter.categoria || o.category_id === dashFilter.categoria);
+    }
 
     // Tiles: ganhos e gastos do escopo filtrado (gastos = despesas + contas)
     const receitas = ftx.filter((t) => t.tipo === "receita").reduce((s, t) => s + (+t.valor || 0), 0);
     const despTx = ftx.filter((t) => t.tipo === "despesa").reduce((s, t) => s + (+t.valor || 0), 0);
-    const despContas = contasEscopo.reduce((s, b) => s + (+b.valor || 0), 0);
+    const despContas = contasEscopo.reduce((s, o) => s + o.valor, 0);
     const despesas = despTx + despContas;
 
-    // Saldo do mês = META (teto do Orçamento) − gastos do mês (despesas + contas)
-    const metaMes = budgets.reduce((s, b) => s + (+b.limite || 0), 0);
-    setMoney("kpiSaldo", metaMes - despesas);
+    // Saldo do mês = o que entrou − o que saiu.
+    // `despesas` já traz conta E cartão (todo gasto no cartão é uma despesa
+    // com forma "cartao") mais as contas a pagar — por isso não se soma o
+    // cartão de novo aqui, senão ele contaria duas vezes.
+    setMoney("kpiSaldo", receitas - despesas);
     const hu = $("#heroUpdated");
-    if (hu) hu.textContent = metaMes > 0
-      ? `Meta ${money(metaMes)} − gastos ${money(despesas)}${quem}`
-      : "Defina o teto na aba Orçamento para calcular a meta do mês";
+    if (hu) hu.textContent = `${money(receitas)} entrou − ${money(despesas)} saiu • ${escopo}${quem}`;
 
     setMoney("kpiReceitas", receitas);
     setMoney("kpiDespesas", despesas);
@@ -300,6 +382,16 @@
     const ld = $("#lblDespesas"); if (ld) ld.textContent = "Gastos • " + escopo + quem;
     applyHide();
 
+    // Meta do mês: sempre sobre o MÊS CORRENTE inteiro, independente dos
+    // filtros — uma meta mensal não muda porque você filtrou por pessoa.
+    const mesAtual = today().slice(0, 7);
+    const gastosDoMes =
+      tx.filter((t) => t.tipo === "despesa" && String(t.data || "").slice(0, 7) === mesAtual)
+        .reduce((s, t) => s + (+t.valor || 0), 0) +
+      FC.Bills.ocorrenciasDoMes(bills, mesAtual).reduce((s, o) => s + o.valor, 0);
+    renderMeta(budgets, gastosDoMes);
+
+    renderHoje(tx, bills, catById);
     renderUpcoming(tx, catById);
 
     // Rosca de despesas por categoria (inclui despesas e contas do escopo)
@@ -308,14 +400,14 @@
       if (t.tipo !== "despesa") return;
       byCat[t.category_id] = (byCat[t.category_id] || 0) + (+t.valor || 0);
     });
-    contasEscopo.forEach((b) => {
-      byCat[b.category_id] = (byCat[b.category_id] || 0) + (+b.valor || 0);
+    contasEscopo.forEach((o) => {
+      byCat[o.category_id] = (byCat[o.category_id] || 0) + o.valor;
     });
     const rows = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
     renderDonut($("#categoryChart"), rows, catById);
 
-    // Insights (respeita os filtros)
-    const ins = Forecast.insights(ftx, budgets, catById);
+    // Insights (respeita os filtros; conta não é de uma pessoa só)
+    const ins = Forecast.insights(ftx, budgets, catById, dashFilter.pessoa ? [] : bills);
     $("#insights").innerHTML = ins.map((i) =>
       `<div class="alert ${i.level === "bad" ? "bad" : i.level === "ok" ? "ok" : ""}">${i.text}</div>`).join("");
 
@@ -329,7 +421,7 @@
     }).join("") || `<div class="empty">${filtrosAtivos() ? "Nenhum lançamento com esses filtros." : "Sem lançamentos."}</div>`;
 
     // Mini projeção
-    const p = Forecast.projectByDays(tx, accounts);
+    const p = Forecast.projectByDays(tx, accounts, bills);
     $("#miniForecast").innerHTML = `
       <div class="row"><span>Em 30 dias</span><b>${money(p.d30)}</b></div>
       <div class="row"><span>Em 90 dias</span><b>${money(p.d90)}</b></div>
@@ -345,12 +437,15 @@
     body.innerHTML = list.map((t) => {
       const c = catById(t.category_id);
       return `<tr>
-        <td>${fmtDate(t.data)}</td><td>${t.descricao}</td>
-        <td>${c ? c.icone + " " + c.nome : "—"}${t.detalhe ? ` <span class="muted">— ${t.detalhe}</span>` : ""}</td>
-        <td>${t.pessoa || "—"}</td>
+        <td>${fmtDate(t.data)}</td><td>${esc(t.descricao)}</td>
+        <td>${c ? c.icone + " " + esc(c.nome) : "—"}${t.detalhe ? ` <span class="muted">— ${esc(t.detalhe)}</span>` : ""}</td>
+        <td>${esc(t.pessoa) || "—"}</td>
         <td>${t.forma === "cartao" ? "💳 Cartão" : "🏦 Conta"}</td>
         <td class="right negative">${money(t.valor)}</td>
-        <td class="right"><button class="link-danger" data-del="transactions" data-id="${t.id}">excluir</button></td>
+        <td class="right nowrap">
+          <button class="link" data-edit="expense" data-id="${t.id}">editar</button>
+          <button class="link-danger" data-del="transactions" data-del-label="lançamento" data-id="${t.id}">excluir</button>
+        </td>
       </tr>`;
     }).join("");
   }
@@ -363,12 +458,15 @@
     body.innerHTML = list.map((t) => {
       const c = catById(t.category_id);
       return `<tr>
-        <td>${fmtDate(t.data)}</td><td>${t.descricao}</td>
-        <td>${c ? c.icone + " " + c.nome : "—"}</td>
-        <td>${t.pessoa || "—"}</td>
+        <td>${fmtDate(t.data)}</td><td>${esc(t.descricao)}</td>
+        <td>${c ? c.icone + " " + esc(c.nome) : "—"}${t.detalhe ? ` <span class="muted">— ${esc(t.detalhe)}</span>` : ""}</td>
+        <td>${esc(t.pessoa) || "—"}</td>
         <td>${t.recorrencia === "mensal" ? "🔁 Mensal" : "Única"}</td>
         <td class="right positive">${money(t.valor)}</td>
-        <td class="right"><button class="link-danger" data-del="transactions" data-id="${t.id}">excluir</button></td>
+        <td class="right nowrap">
+          <button class="link" data-edit="income" data-id="${t.id}">editar</button>
+          <button class="link-danger" data-del="transactions" data-del-label="lançamento" data-id="${t.id}">excluir</button>
+        </td>
       </tr>`;
     }).join("");
   }
@@ -408,86 +506,105 @@
         <div class="hint" style="margin-top:8px">Fecha dia ${c.dia_fechamento || "—"} • vence dia ${c.dia_vencimento || "—"}</div>
         ${futuro > 0 ? `<div class="row" style="margin-top:12px"><span>🔮 Comprometido futuro</span><b class="negative">${money(futuro)}</b></div>${monthsList}` : ""}
         ${cardTx.length ? `<div class="ctx-title">Lançamentos deste cartão — toque no valor para editar</div><div class="ctx-list">${txRows}</div>` : ""}
-        <div class="row" style="border:0;padding:12px 0 0;margin-top:4px"><span></span><button class="link-danger" data-del="cards" data-del-label="cartão" data-id="${c.id}">excluir cartão</button></div>
+        <div class="row" style="border:0;padding:12px 0 0;margin-top:4px">
+          <button class="link" data-edit="card" data-id="${c.id}">editar cartão</button>
+          <button class="link-danger" data-del="cards" data-del-label="cartão" data-id="${c.id}">excluir cartão</button>
+        </div>
       </div>`;
     }).join("");
   }
 
   // ---------- Contas a pagar ----------
-  // Uma conta "mensal" vale do vencimento em diante (todo mês); "única" só no mês do vencimento.
-  function contaNoMes(b, ym) {
-    const venc = String(b.vencimento || "").slice(0, 7);
-    if (!venc) return false;
-    return b.recorrencia === "mensal" ? venc <= ym : venc === ym;
-  }
-  function daysOverdue(venc) {
-    const t = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00");
-    const v = new Date(venc + "T00:00:00");
-    return Math.round((t - v) / 86400000); // >0 = dias em atraso
-  }
+  // Uma conta mensal não é UM registro pago ou não: cada mês tem seu próprio
+  // vencimento, seu próprio valor e seu próprio "pagou?". A tela mostra um
+  // mês por vez — as regras estão em bills.js (FC.Bills).
+  let billsMes = "";                                   // "" = mês atual
+  const mesDasContas = () => billsMes || today().slice(0, 7);
+
   function updateBillsBadge(n) {
     const b = $("#billsBadge");
     if (b) { b.textContent = n > 0 ? n : ""; b.style.display = n > 0 ? "inline-flex" : "none"; }
   }
-  function renderBills(bills) {
-    const body = $("#billsTable"); if (!body) return;
-    const cats = Store.allSync("categories").filter((c) => c.tipo === "despesa");
-    const sorted = bills.slice().sort((a, b) => {
-      if (!!a.paga !== !!b.paga) return a.paga ? 1 : -1;        // não pagas primeiro
-      return (a.vencimento || "").localeCompare(b.vencimento || "");
+
+  // Meses disponíveis no seletor: da conta mais antiga até 12 meses à frente.
+  function opcoesMesContas(bills) {
+    const Bl = FC.Bills;
+    const atual = today().slice(0, 7);
+    let inicio = atual;
+    (bills || []).forEach((b) => {
+      const ym = Bl.ymDe(b.vencimento);
+      if (ym && ym < inicio) inicio = ym;
     });
-    $("#billsEmpty").classList.toggle("hidden", sorted.length > 0);
-    const overdue = sorted.filter((b) => !b.paga && b.vencimento && daysOverdue(b.vencimento) > 5);
-    const alertBox = $("#billsAlert");
-    alertBox.innerHTML = overdue.length
-      ? `<div class="alert bad">🔴 <b>${overdue.length} conta(s) atrasada(s) há mais de 5 dias:</b> ${overdue.map((b) => `${b.descricao} (${daysOverdue(b.vencimento)}d)`).join(", ")}. Total: ${money(overdue.reduce((s, b) => s + (+b.valor || 0), 0))}.</div>`
-      : "";
-    body.innerHTML = sorted.map((b) => {
-      const dOver = b.vencimento ? daysOverdue(b.vencimento) : 0;
-      const late = !b.paga && dOver > 5;
-      const options = `<option value="">—</option>` + cats.map((c) => `<option value="${c.id}" ${c.id === b.category_id ? "selected" : ""}>${c.icone} ${c.nome}</option>`).join("");
-      const status = b.paga
-        ? `<span class="badge">✔ Paga</span>`
-        : dOver > 5 ? `<span class="badge bad">Atrasada ${dOver}d</span>`
-        : dOver >= 0 ? `<span class="badge warn">${dOver === 0 ? "Vence hoje" : "Atrasada " + dOver + "d"}</span>`
-        : `<span class="badge warn">Vence em ${-dOver}d</span>`;
-      return `<tr class="${late ? "bill-late" : ""}">
-        <td>${b.descricao}${b.recorrencia === "mensal" ? ' <span class="badge warn">🔁 Mensal</span>' : ""}</td>
-        <td><select class="bill-cat" data-id="${b.id}">${options}</select></td>
-        <td>${b.vencimento ? fmtDate(b.vencimento) : "—"}</td>
-        <td class="right negative">${money(b.valor)}</td>
-        <td><label class="chk"><input type="checkbox" class="bill-paid" data-id="${b.id}" ${b.paga ? "checked" : ""}> ${status}</label></td>
-        <td class="right"><button class="link-danger" data-del="bills" data-id="${b.id}">excluir</button></td>
-      </tr>`;
-    }).join("");
-    updateBillsBadge(overdue.length);
+    const out = [];
+    const fim = Bl.ymAdd(atual, 12);
+    for (let ym = inicio; Bl.ymDiff(ym, fim) >= 0; ym = Bl.ymAdd(ym, 1)) out.push(ym);
+    return out;
   }
 
-  // ---------- Orçamento (teto único total do mês) ----------
-  function renderBudget(tx, budgets, catById, bills) {
-    bills = bills || [];
-    const wrap = $("#budgetList");
-    const teto = budgets.reduce((s, b) => s + (+b.limite || 0), 0);
-    if (!teto) { wrap.innerHTML = '<div class="empty">Nenhum teto definido. Clique em “Definir teto mensal” — ele vale para todas as categorias juntas.</div>'; return; }
+  function renderBills(bills) {
+    const body = $("#billsTable"); if (!body) return;
+    const Bl = FC.Bills;
+    const ym = mesDasContas();
+    const hoje = today();
+    const cats = Store.allSync("categories").filter((c) => c.tipo === "despesa");
 
-    // Gasto do mês atual = despesas (transações) + contas a pagar do mês
-    const mesAtual = today().slice(0, 7);
-    const gastoTx = tx.filter((t) => t.tipo === "despesa" && String(t.data || "").slice(0, 7) === mesAtual)
-      .reduce((s, t) => s + (+t.valor || 0), 0);
-    const gastoContas = bills.filter((b) => contaNoMes(b, mesAtual))
-      .reduce((s, b) => s + (+b.valor || 0), 0);
-    const gasto = gastoTx + gastoContas;
-    const p = teto > 0 ? (gasto / teto) * 100 : 0;
-    const lvl = p >= 100 ? "bad" : p >= 80 ? "warn" : "good";
-    const restante = teto - gasto;
-    wrap.innerHTML = `
-      <div class="row" style="border:0;padding:0 0 6px"><span>Teto mensal (todas as categorias)</span><b>${money(teto)}</b></div>
-      <div class="row" style="border:0;padding:0 0 6px"><span>Gasto no mês (despesas + contas)</span><b class="${restante < 0 ? "negative" : ""}">${money(gasto)}</b></div>
-      <div class="bar"><div class="fill ${lvl}" style="width:${Math.min(100, p)}%"></div></div>
-      <div class="hint" style="margin-top:10px">${restante >= 0
-        ? `Ainda cabe <b>${money(restante)}</b> este mês (${pct(Math.max(0, 100 - p))} livre).`
-        : `Você passou <b>${money(-restante)}</b> do teto este mês.`}</div>
-      <div style="margin-top:16px"><button class="link-danger" data-del="budgets" data-del-label="teto" data-id="${budgets[0].id}">remover teto</button></div>`;
+    const sel = $("#billsMes");
+    if (sel) {
+      const meses = opcoesMesContas(bills);
+      if (meses.indexOf(ym) < 0) meses.push(ym);
+      sel.innerHTML = meses.sort().map((m) => `<option value="${m}">${mesLabel(m)}</option>`).join("");
+      sel.value = ym;
+    }
+
+    const ocorrencias = Bl.ocorrenciasDoMes(bills, ym).sort((a, b) => {
+      if (!!a.paga !== !!b.paga) return a.paga ? 1 : -1;        // não pagas primeiro
+      return (a.venc || "").localeCompare(b.venc || "");
+    });
+    $("#billsEmpty").classList.toggle("hidden", ocorrencias.length > 0);
+
+    // O alerta olha TODOS os meses, não só o que está na tela — uma conta
+    // esquecida em maio precisa aparecer mesmo com julho selecionado.
+    const atrasadas = Bl.atrasadas(bills, hoje);
+    const graves = atrasadas.filter((o) => o.dias > 5);
+    $("#billsAlert").innerHTML = graves.length
+      ? `<div class="alert bad">🔴 <b>${graves.length} conta(s) atrasada(s) há mais de 5 dias:</b> ` +
+        `${graves.map((o) => `${esc(o.descricao)} ${mesLabel(o.ym)} (${o.dias}d)`).join(", ")}. ` +
+        `Total: ${money(graves.reduce((s, o) => s + o.valor, 0))}.</div>`
+      : "";
+
+    const total = ocorrencias.reduce((s, o) => s + o.valor, 0);
+    const pago = ocorrencias.filter((o) => o.paga).reduce((s, o) => s + o.valor, 0);
+    const resumo = $("#billsResumo");
+    if (resumo) resumo.innerHTML = ocorrencias.length ? `
+      <div class="row" style="border:0;padding:0 0 6px"><span>Total de ${mesLabel(ym)}</span><b>${money(total)}</b></div>
+      <div class="row" style="border:0;padding:0 0 6px"><span>Já pago</span><b class="positive">${money(pago)}</b></div>
+      <div class="row" style="border:0;padding:0"><span>Falta pagar</span><b class="negative">${money(total - pago)}</b></div>` : "";
+
+    body.innerHTML = ocorrencias.map((o) => {
+      const dOver = o.venc ? Bl.diasEntre(o.venc, hoje) : 0;
+      const late = !o.paga && dOver > 5;
+      const options = `<option value="">—</option>` + cats.map((c) =>
+        `<option value="${c.id}" ${c.id === o.category_id ? "selected" : ""}>${c.icone} ${esc(c.nome)}</option>`).join("");
+      const status = o.paga
+        ? `<span class="badge">✔ Paga${o.pagaEm ? " em " + fmtDate(o.pagaEm) : ""}</span>`
+        : dOver > 5 ? `<span class="badge bad">Atrasada ${dOver}d</span>`
+        : dOver > 0 ? `<span class="badge warn">Atrasada ${dOver}d</span>`
+        : dOver === 0 ? `<span class="badge warn">Vence hoje</span>`
+        : `<span class="badge warn">Vence em ${-dOver}d</span>`;
+      return `<tr class="${late ? "bill-late" : ""}">
+        <td>${esc(o.descricao)}${o.recorrencia === "mensal" ? ' <span class="badge warn">🔁 Mensal</span>' : ""}</td>
+        <td><select class="bill-cat" data-id="${o.id}">${options}</select></td>
+        <td>${o.venc ? fmtDate(o.venc) : "—"}</td>
+        <td class="right"><input class="bill-val" type="number" step="0.01" min="0" value="${o.valor}"
+          data-id="${o.id}" data-ym="${o.ym}" aria-label="valor de ${esc(o.descricao)} em ${mesLabel(o.ym)}"></td>
+        <td><label class="chk"><input type="checkbox" class="bill-paid" data-id="${o.id}" data-ym="${o.ym}" ${o.paga ? "checked" : ""}> ${status}</label></td>
+        <td class="right nowrap">
+          <button class="link" data-edit="bill" data-id="${o.id}">editar</button>
+          <button class="link-danger" data-del="bills" data-del-label="conta" data-id="${o.id}">excluir</button>
+        </td>
+      </tr>`;
+    }).join("");
+    updateBillsBadge(atrasadas.length);
   }
 
   // ---------- Metas ----------
@@ -501,24 +618,46 @@
         <div class="row" style="border:0;padding:4px 0"><span>${money(g.valor_atual)}</span><b>${money(g.valor_alvo)}</b></div>
         <div class="bar"><div class="fill good" style="width:${Math.min(100, p)}%"></div></div>
         <div class="hint" style="margin-top:8px">${pct(p)} concluído${g.prazo ? " • até " + fmtDate(g.prazo) : ""}</div>
-        <div class="row" style="border:0;padding:12px 0 0"><span></span><button class="link-danger" data-del="goals" data-del-label="meta" data-id="${g.id}">excluir meta</button></div>
+        <div class="row" style="border:0;padding:12px 0 0">
+          <button class="link" data-edit="goal" data-id="${g.id}">editar</button>
+          <button class="link-danger" data-del="goals" data-del-label="meta" data-id="${g.id}">excluir meta</button>
+        </div>
       </div>`;
     }).join("");
   }
 
   // ---------- Projeções ----------
-  function renderForecast(tx, accounts, goals) {
-    const p = Forecast.projectByDays(tx, accounts);
+  function renderForecast(tx, accounts, goals, bills) {
+    bills = bills || [];
+    accounts = accounts || [];
+
+    // Ponto de partida: sem saldo informado, a projeção começa do zero e
+    // vira só a soma dos lançamentos — por isso o aviso aparece em destaque.
+    const conta = accounts[0] || null;
+    const wrap = $("#saldoConta");
+    if (wrap) {
+      const saldoAtual = Forecast.currentBalance(tx, accounts, bills);
+      wrap.innerHTML = conta ? `
+        <div class="row" style="border:0;padding:0 0 6px"><span>Saldo informado em ${fmtDate(conta.data_saldo)}</span><b>${money(conta.saldo_inicial)}</b></div>
+        <div class="row" style="border:0;padding:0 0 6px"><span>Movimento desde então</span><b>${money(saldoAtual - (+conta.saldo_inicial || 0))}</b></div>
+        <div class="row" style="border:0;padding:0"><span><b>Saldo hoje</b></span><b class="${saldoAtual < 0 ? "negative" : "positive"}">${money(saldoAtual)}</b></div>
+        <div class="hint" style="margin-top:10px">Toda a projeção parte daqui. Atualize sempre que conferir o extrato.</div>
+        <div style="margin-top:12px"><button class="btn secondary tiny" data-edit="account" data-id="${conta.id}">Atualizar saldo</button></div>`
+        : `<div class="alert">Informe quanto você <b>tem em conta hoje</b>. Sem isso a projeção parte do zero e só mostra a soma dos lançamentos, não o dinheiro de verdade.</div>
+           <button class="btn" data-action="new-account" style="margin-top:12px">Informar saldo em conta</button>`;
+    }
+
+    const p = Forecast.projectByDays(tx, accounts, bills);
     $("#fc30").textContent = money(p.d30);
     $("#fc90").textContent = money(p.d90);
     $("#fc180").textContent = money(p.d180);
     $("#fc365").textContent = money(p.d365);
 
-    const { series } = Forecast.projectSeries(tx, accounts, 12);
+    const { series } = Forecast.projectSeries(tx, accounts, bills, 12);
     renderArea($("#forecastChart"), series);
 
-    const ind = Forecast.indicators(tx, accounts, goals);
-    const alerts = Forecast.riskAlerts(tx, accounts, ind.reservaMeta);
+    const ind = Forecast.indicators(tx, accounts, bills, goals);
+    const alerts = Forecast.riskAlerts(tx, accounts, bills, ind.reservaMeta);
     $("#riskAlerts").innerHTML = alerts.map((a) =>
       `<div class="alert ${a.level === "bad" ? "bad" : a.level === "ok" ? "ok" : ""}">${a.text}</div>`).join("");
   }
@@ -526,6 +665,13 @@
   // ---------- Modal / formulários ----------
   const modal = $("#modal");
   let modalKind = null;
+  let modalId = null;      // preenchido = está EDITANDO um registro existente
+
+  // Em que coleção mora cada tipo de formulário.
+  const COLECAO = {
+    expense: "transactions", income: "transactions", card: "cards",
+    bill: "bills", budget: "budgets", goal: "goals", account: "accounts"
+  };
 
   const fieldsFor = {
     expense: (cats) => [
@@ -544,6 +690,7 @@
       { name: "valor", label: "Valor (R$)", type: "number", req: true },
       { name: "data", label: "Data", type: "date", value: today() },
       { name: "category_id", label: "Categoria", type: "select", options: cats.filter(c => c.tipo === "receita").map(c => ({ v: c.id, t: c.icone + " " + c.nome })) },
+      { name: "detalhe", label: "Especifique a receita (categoria Outros)", type: "text", full: true },
       { name: "pessoa", label: "Quem lançou", type: "text", list: "pessoasList", value: currentPerson() },
       { name: "recorrencia", label: "Recorrência", type: "select", options: [{ v: "nenhuma", t: "Única" }, { v: "mensal", t: "🔁 Mensal" }] }
     ],
@@ -574,16 +721,32 @@
     ],
     bill: (cats) => [
       { name: "descricao", label: "Descrição da conta", type: "text", full: true, req: true },
-      { name: "valor", label: "Valor (R$)", type: "number", req: true },
-      { name: "vencimento", label: "Data de vencimento", type: "date", value: today() },
+      { name: "valor", label: "Valor padrão (R$)", type: "number", req: true },
+      { name: "vencimento", label: "1º vencimento", type: "date", value: today() },
       { name: "recorrencia", label: "Recorrência", type: "select", options: [{ v: "nenhuma", t: "Única" }, { v: "mensal", t: "🔁 Mensal (repete todo mês)" }] },
       { name: "category_id", label: "Categoria", type: "select", options: cats.filter((c) => c.tipo === "despesa").map((c) => ({ v: c.id, t: c.icone + " " + c.nome })) }
+    ],
+    account: () => [
+      { name: "nome", label: "Onde está o dinheiro (banco, carteira)", type: "text", full: true, value: "Conta corrente" },
+      { name: "saldo_inicial", label: "Quanto você tem hoje (R$)", type: "number", req: true },
+      { name: "data_saldo", label: "Data desse saldo", type: "date", value: today() }
     ]
   };
 
   function today() { return new Date().toISOString().slice(0, 10); }
 
-  function openModal(kind) {
+  const TITULOS = {
+    expense: ["Nova despesa", "Editar despesa"],
+    income: ["Nova receita", "Editar receita"],
+    card: ["Novo cartão", "Editar cartão"],
+    installment: ["Compra parcelada no cartão", "Compra parcelada no cartão"],
+    bill: ["Nova conta a pagar", "Editar conta a pagar"],
+    budget: ["Teto mensal total", "Editar teto mensal"],
+    goal: ["Nova meta", "Editar meta"],
+    account: ["Saldo em conta", "Atualizar saldo em conta"]
+  };
+
+  function openModal(kind, id) {
     refreshPessoasDatalist();
     const cats = Store.allSync("categories");
     const cards = Store.allSync("cards");
@@ -592,21 +755,30 @@
       return;
     }
     modalKind = kind;
-    const titles = { expense: "Nova despesa", income: "Nova receita", card: "Novo cartão", installment: "Compra parcelada no cartão", bill: "Nova conta a pagar", budget: "Teto mensal total", goal: "Nova meta" };
-    $("#modalTitle").textContent = titles[kind] || "Novo";
+    modalId = id || null;
+    const registro = modalId
+      ? Store.allSync(COLECAO[kind] || "").find((x) => x.id === modalId) || null
+      : null;
+    if (modalId && !registro) { alert("Não encontrei esse registro. Atualize a página."); return; }
+
+    $("#modalTitle").textContent = (TITULOS[kind] || ["Novo", "Editar"])[registro ? 1 : 0];
     const fields = fieldsFor[kind](cats, cards);
     $("#modalForm").innerHTML = fields.map((f) => {
+      // Editando: o valor do registro manda; criando: o padrão do campo.
+      const atual = registro && registro[f.name] != null ? registro[f.name] : f.value;
       const wrap = `field${f.full ? " full" : ""}`;
       if (f.type === "select") {
-        const opts = (f.options || []).map((o) => `<option value="${o.v}">${o.t}</option>`).join("");
+        const opts = (f.options || []).map((o) =>
+          `<option value="${o.v}"${String(o.v) === String(atual) ? " selected" : ""}>${o.t}</option>`).join("");
         return `<div class="${wrap}"><label>${f.label}</label><select name="${f.name}">${opts}</select></div>`;
       }
-      const val = f.value != null ? ` value="${f.value}"` : "";
+      const val = atual != null && atual !== "" ? ` value="${esc(atual)}"` : "";
       const list = f.list ? ` list="${f.list}"` : "";
       return `<div class="${wrap}"><label>${f.label}</label><input name="${f.name}" type="${f.type}"${val}${list}${f.req ? " required" : ""}></div>`;
     }).join("");
 
-    // Campo "Especifique" só aparece quando a categoria for "Outros/Outras".
+    // Campo "Especifique" só aparece quando a categoria for "Outros/Outras" —
+    // vale para despesa e receita, e o texto já digitado não se perde ao trocar.
     const form = $("#modalForm");
     const detEl = form.querySelector('[name="detalhe"]');
     if (detEl) {
@@ -616,30 +788,37 @@
         const opt = catSel && catSel.options[catSel.selectedIndex];
         const isOutros = /outros|outras/i.test(opt ? opt.textContent : "");
         detWrap.style.display = isOutros ? "" : "none";
+        detEl.placeholder = isOutros ? "Ex.: presente de aniversário" : "";
       };
       if (catSel) catSel.addEventListener("change", upd);
       upd();
     }
     modal.classList.add("show");
   }
-  function closeModal() { modal.classList.remove("show"); modalKind = null; }
+  function closeModal() { modal.classList.remove("show"); modalKind = null; modalId = null; }
 
   async function saveModal() {
     const form = $("#modalForm");
     const data = {};
     $$("input,select", form).forEach((i) => { data[i.name] = i.value; });
     // Validação mínima
-    const numFields = ["valor", "limite", "dia_fechamento", "dia_vencimento", "valor_alvo", "valor_atual"];
+    const numFields = ["valor", "limite", "dia_fechamento", "dia_vencimento", "valor_alvo", "valor_atual", "saldo_inicial"];
     numFields.forEach((n) => { if (data[n] != null && data[n] !== "") data[n] = parseFloat(data[n]); });
+
+    const editando = !!modalId;
 
     if (modalKind === "expense") {
       if (!data.descricao || !data.valor) return alert("Preencha descrição e valor.");
-      await Store.add("transactions", { ...data, tipo: "despesa", conciliada: false });
+      if (editando) await Store.update("transactions", modalId, data);
+      else await Store.add("transactions", { ...data, tipo: "despesa", conciliada: false });
+      await aprenderCategoria(data.descricao, data.category_id);
     } else if (modalKind === "income") {
       if (!data.descricao || !data.valor) return alert("Preencha descrição e valor.");
-      await Store.add("transactions", { ...data, tipo: "receita", forma: "conta", conciliada: false });
+      if (editando) await Store.update("transactions", modalId, data);
+      else await Store.add("transactions", { ...data, tipo: "receita", forma: "conta", conciliada: false });
     } else if (modalKind === "card") {
-      await Store.add("cards", data);
+      if (editando) await Store.update("cards", modalId, data);
+      else await Store.add("cards", data);
     } else if (modalKind === "installment") {
       const total = +data.valor || 0;
       const n = Math.max(1, parseInt(data.parcelas, 10) || 1);
@@ -658,18 +837,66 @@
       }
     } else if (modalKind === "bill") {
       if (!data.descricao || !data.valor) { alert("Preencha descrição e valor."); return; }
-      await Store.add("bills", { ...data, paga: false });
+      if (editando) await Store.update("bills", modalId, data);
+      else await Store.add("bills", { ...data, pagas: {}, valores: {} });
     } else if (modalKind === "budget") {
-      if (!data.limite) { alert("Informe o teto mensal."); return; }
-      // Teto único: remove os anteriores e grava só um (vale para todas as categorias).
+      if (!data.limite) { alert("Informe a meta de gastos do mês."); return; }
+      // Meta única: remove as anteriores e grava só uma (vale para o mês todo).
       const atuais = Store.allSync("budgets");
       for (const b of atuais) await Store.remove("budgets", b.id);
       await Store.add("budgets", { limite: data.limite, competencia: today().slice(0, 7) });
     } else if (modalKind === "goal") {
-      await Store.add("goals", { ...data, status: "ativa" });
+      if (editando) await Store.update("goals", modalId, data);
+      else await Store.add("goals", { ...data, status: "ativa" });
+    } else if (modalKind === "account") {
+      if (data.saldo_inicial == null || data.saldo_inicial === "") { alert("Informe quanto você tem em conta."); return; }
+      if (editando) await Store.update("accounts", modalId, data);
+      else {
+        // Um registro só: o saldo é do conjunto, não de cada banco separado.
+        for (const a of Store.allSync("accounts")) await Store.remove("accounts", a.id);
+        await Store.add("accounts", data);
+      }
     }
     closeModal();
     render();
+  }
+
+  // ---------- Categorização com aprendizado ----------
+  // O app guarda "o que essa descrição costuma ser" e para de errar depois
+  // da primeira correção. A chave joga fora o que muda de uma compra para
+  // outra: acentos, números, código da loja, parcela, cidade.
+  function chaveCategoria(desc) {
+    return String(desc || "")
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/\d+/g, " ")
+      .replace(/[^a-z ]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter((p) => p.length > 2)
+      .slice(0, 3)
+      .join(" ");
+  }
+
+  async function aprenderCategoria(desc, categoryId) {
+    const chave = chaveCategoria(desc);
+    if (!chave || !categoryId) return;
+    const existente = Store.allSync("catrules").find((r) => r.chave === chave);
+    if (existente) {
+      if (existente.category_id !== categoryId)
+        await Store.update("catrules", existente.id, { category_id: categoryId });
+    } else {
+      await Store.add("catrules", { chave, category_id: categoryId });
+    }
+  }
+
+  function categoriaAprendida(desc) {
+    const chave = chaveCategoria(desc);
+    if (!chave) return null;
+    const r = Store.allSync("catrules").find((x) => x.chave === chave);
+    if (!r) return null;
+    return Store.allSync("categories").find((c) => c.id === r.category_id) || null;
   }
 
   // ---------- Importação (CSV / Excel / PDF) ----------
@@ -706,6 +933,9 @@
   }
 
   function suggestCategory(desc) {
+    // O que o usuário já corrigiu antes vale mais que as regras fixas.
+    const aprendida = categoriaAprendida(desc);
+    if (aprendida && aprendida.tipo === "despesa") return aprendida;
     const cats = Store.allSync("categories");
     const rules = [
       { re: /mercado|super|atacad|hortifr|padaria/i, cat: "Alimentação" },
@@ -755,6 +985,82 @@
     return lines.map((l) => l.split(sep).map((c) => c.trim().replace(/^"|"$/g, "")));
   }
 
+  // Extrato de banco brasileiro costuma vir em ISO-8859-1. Lido como UTF-8,
+  // os acentos viram "�" — então testamos e reabrimos no outro formato.
+  async function lerTexto(file) {
+    const buf = await file.arrayBuffer();
+    const utf8 = new TextDecoder("utf-8").decode(buf);
+    if (utf8.indexOf("\uFFFD") < 0) return utf8;
+    try { return new TextDecoder("windows-1252").decode(buf); } catch (e) { return utf8; }
+  }
+
+  // ---------- OFX (extrato do banco) ----------
+  // OFX é SGML e nem sempre fecha as tags. Em vez de montar uma árvore,
+  // isolamos cada <STMTTRN> e lemos os campos por regex.
+  function ofxToTransactions(text) {
+    const blocos = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || [];
+    if (!blocos.length) {
+      return { parsed: [], header: [], erro: true, motivo: "Não encontrei lançamentos (<STMTTRN>) neste arquivo OFX." };
+    }
+    const cats = Store.allSync("categories");
+    const byName = (nome, tipo) => cats.find((c) => c.tipo === tipo && c.nome.toLowerCase() === String(nome || "").toLowerCase());
+    const campo = (bloco, tag) => {
+      const m = bloco.match(new RegExp("<" + tag + ">([^<\\r\\n]*)", "i"));
+      return m ? m[1].trim() : "";
+    };
+    const parsed = blocos.map((b) => {
+      const num = parseFloat(campo(b, "TRNAMT").replace(/\s/g, "").replace(",", "."));
+      if (!num) return null;
+      const dt = campo(b, "DTPOSTED").replace(/[^0-9]/g, "").slice(0, 8);
+      const data = dt.length === 8 ? `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}` : today();
+      const desc = (campo(b, "MEMO") || campo(b, "NAME") || "Lançamento").replace(/\s+/g, " ").trim();
+      // O sinal do TRNAMT manda; TRNTYPE só desempata quando vem positivo.
+      const tipo = num < 0 || campo(b, "TRNTYPE").toUpperCase() === "DEBIT" ? "despesa" : "receita";
+      const cat = tipo === "despesa"
+        ? suggestCategory(desc)
+        : (byName("Outros", "receita") || cats.find((c) => c.tipo === "receita"));
+      return {
+        data, descricao: desc, valor: Math.abs(num), tipo,
+        category_id: cat ? cat.id : null, catNome: cat ? cat.nome : "—",
+        forma: "conta", recorrencia: "nenhuma", fitid: campo(b, "FITID") || null
+      };
+    }).filter(Boolean);
+    return { parsed, header: [] };
+  }
+
+  // ---------- Conciliação ----------
+  // Importar o mesmo extrato duas vezes duplicava tudo. Agora cada linha
+  // é conferida contra o que já está gravado: pelo identificador do banco
+  // (FITID) quando existe, senão por valor + data próxima + descrição.
+  function chaveDesc(s) {
+    return String(s || "").toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  }
+  function distanciaDias(a, b) {
+    return Math.abs(Math.round((new Date(a + "T00:00:00") - new Date(b + "T00:00:00")) / 86400000));
+  }
+  function marcarDuplicatas(parsed) {
+    const existentes = Store.allSync("transactions");
+    const porFitid = {};
+    existentes.forEach((t) => { if (t.fitid) porFitid[t.fitid] = t; });
+    return parsed.map((p) => {
+      let motivo = "";
+      if (p.fitid && porFitid[p.fitid]) {
+        motivo = "mesmo identificador do banco";
+      } else {
+        const chave = chaveDesc(p.descricao);
+        const igual = existentes.find((t) =>
+          t.tipo === p.tipo &&
+          Math.abs((+t.valor || 0) - p.valor) < 0.005 &&
+          t.data && distanciaDias(t.data, p.data) <= 3 &&
+          chaveDesc(t.descricao) === chave);
+        if (igual) motivo = `igual a "${igual.descricao}" de ${fmtDate(igual.data)}`;
+      }
+      return { ...p, duplicata: !!motivo, motivoDup: motivo };
+    });
+  }
+
   async function pdfToMatrix(file) {
     if (typeof pdfjsLib === "undefined") throw new Error("A biblioteca de PDF não carregou (precisa de internet).");
     const buf = await file.arrayBuffer();
@@ -785,23 +1091,66 @@
   function renderImportPreview(res) {
     const preview = $("#importPreview");
     if (res.erro) {
-      preview.innerHTML = `<div class="alert bad">Não consegui identificar as colunas de <b>descrição</b> e <b>valor</b>.<br>Cabeçalho lido: ${(res.header || []).join(", ") || "(vazio)"}.<br>Confira o modelo ao lado.</div>`;
+      preview.innerHTML = `<div class="alert bad">${res.motivo
+        || `Não consegui identificar as colunas de <b>descrição</b> e <b>valor</b>.<br>Cabeçalho lido: ${esc((res.header || []).join(", ")) || "(vazio)"}.<br>Confira o modelo ao lado.`}</div>`;
       return;
     }
-    const parsed = res.parsed;
-    if (!parsed.length) { preview.innerHTML = `<div class="alert">Nenhum lançamento válido encontrado no arquivo.</div>`; return; }
-    const rec = parsed.filter((p) => p.tipo === "receita").length;
-    const desp = parsed.length - rec;
+    const linhas = marcarDuplicatas(res.parsed || []);
+    if (!linhas.length) { preview.innerHTML = `<div class="alert">Nenhum lançamento válido encontrado no arquivo.</div>`; return; }
+
+    const cats = Store.allSync("categories");
+    const dups = linhas.filter((l) => l.duplicata).length;
+    const novos = linhas.length - dups;
+    const optsDe = (tipo, sel) => cats.filter((c) => c.tipo === tipo)
+      .map((c) => `<option value="${c.id}"${c.id === sel ? " selected" : ""}>${c.icone} ${esc(c.nome)}</option>`).join("");
+
     preview.innerHTML = `
-      <div class="alert ok">${parsed.length} lançamento(s): ${rec} receita(s) e ${desp} despesa(s). Revise e importe.</div>
-      <div style="overflow:auto;max-height:340px">
-        <table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th>Categoria</th><th class="right">Valor</th></tr></thead>
-        <tbody>${parsed.slice(0, 100).map((p) => `<tr><td>${p.data}</td><td>${p.descricao}</td><td>${p.tipo === "receita" ? "🟢" : "🔴"} ${p.tipo}</td><td>${p.catNome}</td><td class="right ${p.tipo === "receita" ? "positive" : "negative"}">${money(p.valor)}</td></tr>`).join("")}</tbody></table>
+      <div class="alert ${dups ? "" : "ok"}">
+        ${linhas.length} lançamento(s) lidos — <b>${novos} novo(s)</b>${dups ? ` e <b>${dups} que já estão no app</b>, já desmarcado(s)` : ""}.
+        ${dups ? "<br>Corrija a categoria antes de importar: o app aprende com a sua escolha." : ""}
       </div>
-      <div class="actions"><button class="btn" id="confirmImport">Importar ${parsed.length} lançamento(s)</button></div>`;
+      <div style="overflow:auto;max-height:360px">
+        <table class="table">
+          <thead><tr>
+            <th><input type="checkbox" id="impTodos"></th>
+            <th>Data</th><th>Descrição</th><th>Categoria</th><th class="right">Valor</th>
+          </tr></thead>
+          <tbody>${linhas.map((l, i) => `
+            <tr class="${l.duplicata ? "bill-late" : ""}">
+              <td><input type="checkbox" class="imp-ck" data-i="${i}"${l.duplicata ? "" : " checked"}></td>
+              <td>${fmtDate(l.data)}</td>
+              <td>${esc(l.descricao)}${l.duplicata ? `<div class="muted">já existe — ${esc(l.motivoDup)}</div>` : ""}</td>
+              <td><select class="imp-cat" data-i="${i}">${optsDe(l.tipo, l.category_id)}</select></td>
+              <td class="right ${l.tipo === "receita" ? "positive" : "negative"}">${l.tipo === "receita" ? "+" : "−"} ${money(l.valor)}</td>
+            </tr>`).join("")}</tbody>
+        </table>
+      </div>
+      <div class="actions"><button class="btn" id="confirmImport">Importar</button></div>`;
+
+    const marcados = () => $$(".imp-ck", preview).filter((c) => c.checked).map((c) => +c.dataset.i);
+    const atualizaBotao = () => { $("#confirmImport").textContent = `Importar ${marcados().length} lançamento(s)`; };
+    atualizaBotao();
+
+    // O ouvinte fica na TABELA (elemento novo a cada leitura de arquivo),
+    // e não no painel, para não empilhar a cada arquivo importado.
+    const tabela = preview.querySelector("table");
+    tabela.addEventListener("change", (e) => {
+      if (e.target.id === "impTodos") $$(".imp-ck", preview).forEach((c) => { c.checked = e.target.checked; });
+      const sel = e.target.closest(".imp-cat");
+      if (sel) linhas[+sel.dataset.i].category_id = sel.value || null;
+      atualizaBotao();
+    });
+
     $("#confirmImport").onclick = async () => {
-      for (const p of parsed) { const { catNome, ...rest } = p; await Store.add("transactions", { ...rest, conciliada: true }); }
-      preview.innerHTML = `<div class="alert ok">✅ Importação concluída! ${parsed.length} lançamento(s) adicionado(s).</div>`;
+      const idx = marcados();
+      if (!idx.length) { alert("Marque pelo menos um lançamento para importar."); return; }
+      for (const i of idx) {
+        const { catNome, duplicata, motivoDup, ...rest } = linhas[i];
+        await Store.add("transactions", { ...rest, conciliada: true });
+        // A categoria que ficou valendo na revisão vira regra para a próxima vez.
+        if (rest.tipo === "despesa") await aprenderCategoria(rest.descricao, rest.category_id);
+      }
+      preview.innerHTML = `<div class="alert ok">✅ Importação concluída! ${idx.length} lançamento(s) adicionado(s).</div>`;
       render();
     };
   }
@@ -812,8 +1161,12 @@
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     try {
       let matrix;
+      if (ext === "ofx" || ext === "qfx") {
+        renderImportPreview(ofxToTransactions(await lerTexto(file)));
+        return;
+      }
       if (ext === "csv" || file.type === "text/csv") {
-        matrix = csvToMatrix(await file.text());
+        matrix = csvToMatrix(await lerTexto(file));
       } else if (ext === "xlsx" || ext === "xls") {
         if (typeof XLSX === "undefined") throw new Error("A biblioteca de Excel não carregou (precisa de internet).");
         const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
@@ -821,7 +1174,7 @@
       } else if (ext === "pdf") {
         matrix = await pdfToMatrix(file);
       } else {
-        throw new Error("Formato não suportado. Use CSV, Excel (.xlsx) ou PDF.");
+        throw new Error("Formato não suportado. Use OFX, CSV, Excel (.xlsx) ou PDF.");
       }
       renderImportPreview(matrixToTransactions(matrix));
     } catch (e) {
@@ -862,9 +1215,12 @@
         if (act === "new-bill") openModal("bill");
         if (act === "new-budget") openModal("budget");
         if (act === "new-goal") openModal("goal");
+        if (act === "new-account") openModal("account");
         if (act === "close-modal") closeModal();
         if (act === "save-modal") saveModal();
       }
+      const ed = e.target.closest("[data-edit]");
+      if (ed) openModal(ed.dataset.edit, ed.dataset.id);
       const del = e.target.closest("[data-del]");
       if (del) {
         const label = del.dataset.delLabel || "lançamento";
@@ -901,13 +1257,31 @@
     });
 
     // Foto de fundo (aparência)
+    const bgStatus = (html) => { const s = $("#bgStatus"); if (s) s.innerHTML = html; };
     const bgPhoto = $("#bgPhoto");
     if (bgPhoto) bgPhoto.addEventListener("change", (e) => {
       const f = e.target.files[0];
-      if (f && window.FC_BG) window.FC_BG.setFromFile(f);
+      if (!f || !window.FC_BG) return;
+      bgStatus("⏳ Preparando a foto…");
+      window.FC_BG.setFromFile(f, (ok) => {
+        bgStatus(ok
+          ? '<span style="color:var(--good)">✅ Foto aplicada.</span>'
+          : '<span style="color:var(--bad)">Não consegui salvar a foto neste aparelho.</span>');
+        // Zera o campo para que escolher a MESMA foto de novo volte a funcionar
+        // (o navegador não dispara "change" quando o valor não muda).
+        bgPhoto.value = "";
+      });
     });
     const bgRemove = $("#bgRemove");
-    if (bgRemove) bgRemove.addEventListener("click", () => { if (window.FC_BG) window.FC_BG.clear(); });
+    if (bgRemove) bgRemove.addEventListener("click", () => {
+      if (!window.FC_BG) return;
+      if (!window.FC_BG.temFoto()) { bgStatus('<span class="muted">Não há foto de fundo para remover.</span>'); return; }
+      const ok = window.FC_BG.clear();
+      if (bgPhoto) bgPhoto.value = "";
+      bgStatus(ok
+        ? '<span style="color:var(--good)">✅ Foto de fundo removida.</span>'
+        : '<span style="color:var(--bad)">A foto sumiu da tela, mas este navegador não deixou apagá-la do armazenamento — ela volta ao recarregar. Isso costuma acontecer em aba anônima.</span>');
+    });
 
     // Apagar todos os dados (zona de perigo)
     const wipe = $("#wipeAll");
@@ -936,11 +1310,32 @@
       }
     });
 
+    // Seletor de mês das contas a pagar
+    const selMes = $("#billsMes");
+    if (selMes) selMes.addEventListener("change", () => { billsMes = selMes.value; render(); });
+
     const billsTable = $("#billsTable");
     if (billsTable) billsTable.addEventListener("change", async (e) => {
+      // Pagamento é por MÊS: marcar julho não marca agosto.
       const paid = e.target.closest(".bill-paid");
       if (paid) {
-        await Store.update("bills", paid.dataset.id, { paga: paid.checked, paga_em: paid.checked ? today() : null });
+        const conta = Store.allSync("bills").find((b) => b.id === paid.dataset.id);
+        if (!conta) return;
+        const pagas = { ...(conta.pagas || {}) };
+        if (paid.checked) pagas[paid.dataset.ym] = today();
+        else delete pagas[paid.dataset.ym];
+        await Store.update("bills", paid.dataset.id, { pagas });
+        render();
+        return;
+      }
+      // Valor também é por mês (luz e água mudam todo mês).
+      const val = e.target.closest(".bill-val");
+      if (val) {
+        const conta = Store.allSync("bills").find((b) => b.id === val.dataset.id);
+        if (!conta) return;
+        const valores = { ...(conta.valores || {}) };
+        valores[val.dataset.ym] = Math.max(0, parseFloat(val.value) || 0);
+        await Store.update("bills", val.dataset.id, { valores });
         render();
         return;
       }

@@ -42,16 +42,32 @@
   window.addEventListener("resize", draw);
 
   window.FC_BG = {
+    temFoto() {
+      try { return !!localStorage.getItem(KEY); } catch (e) { return !!img; }
+    },
     set(dataUrl) {
       try { localStorage.setItem(KEY, dataUrl); } catch (e) {
         alert("A foto ficou grande demais para salvar. Tente uma imagem menor.");
-        return;
+        return false;
       }
       load(dataUrl);
+      return true;
     },
-    clear() { try { localStorage.removeItem(KEY); } catch (e) {} load(null); },
-    // Reduz a imagem antes de salvar (evita estourar o armazenamento)
-    setFromFile(file) {
+    // Devolve true só quando a foto saiu MESMO do armazenamento. Em navegador
+    // com armazenamento bloqueado (aba privada, por exemplo) ela volta ao
+    // recarregar, e aí quem chamou precisa avisar o usuário.
+    clear() {
+      let ok = true;
+      try {
+        localStorage.removeItem(KEY);
+        ok = !localStorage.getItem(KEY);
+      } catch (e) { ok = false; }
+      load(null);
+      return ok;
+    },
+    // Reduz a imagem antes de salvar (evita estourar o armazenamento).
+    // `done(ok)` avisa quando terminou — a leitura do arquivo é assíncrona.
+    setFromFile(file, done) {
       const reader = new FileReader();
       reader.onload = () => {
         const i = new Image();
@@ -62,7 +78,8 @@
           const c = document.createElement("canvas");
           c.width = w; c.height = h;
           c.getContext("2d").drawImage(i, 0, 0, w, h);
-          window.FC_BG.set(c.toDataURL("image/jpeg", 0.72));
+          const ok = window.FC_BG.set(c.toDataURL("image/jpeg", 0.72));
+          if (typeof done === "function") done(ok);
         };
         i.src = reader.result;
       };

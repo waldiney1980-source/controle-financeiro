@@ -44,14 +44,38 @@ FC.Store = (function () {
       { nome: "Cartão de crédito", tipo: "despesa", cor: "#64748b", icone: "💳" },
       { nome: "Outras despesas", tipo: "despesa", cor: "#6b7280", icone: "📦" }
     ].map((c) => ({ id: uid(), parent_id: null, ...c }));
-    return { categories: cats, accounts: [], cards: [], transactions: [], budgets: [], goals: [], bills: [] };
+    return { categories: cats, accounts: [], cards: [], transactions: [], budgets: [], goals: [], bills: [], catrules: [] };
   }
+
+  const COLLECTIONS = ["categories", "accounts", "cards", "transactions", "budgets", "goals", "bills", "catrules"];
 
   function ensureShape(d) {
     d = d || {};
-    ["categories", "accounts", "cards", "transactions", "budgets", "goals", "bills"]
-      .forEach((k) => { if (!Array.isArray(d[k])) d[k] = []; });
+    COLLECTIONS.forEach((k) => { if (!Array.isArray(d[k])) d[k] = []; });
     return d;
+  }
+
+  // ---------- Migrações de formato ----------
+  // Conta a pagar: `paga` era um booleano só, então marcar uma conta MENSAL
+  // como paga a deixava paga para sempre. Agora cada mês tem seu registro:
+  //   pagas  = { "2026-07": "2026-07-05", ... }   competência → data do pagamento
+  //   valores= { "2026-07": 348.90, ... }         valor daquele mês (luz, água…)
+  function migrateBills(d) {
+    let changed = false;
+    (d.bills || []).forEach((b) => {
+      if (b.pagas && typeof b.pagas === "object" && !Array.isArray(b.pagas)) return;
+      const ym = String(b.vencimento || "").slice(0, 7);
+      b.pagas = b.paga && ym ? { [ym]: b.paga_em || b.vencimento } : {};
+      if (!b.valores || typeof b.valores !== "object" || Array.isArray(b.valores)) b.valores = {};
+      delete b.paga;
+      delete b.paga_em;
+      changed = true;
+    });
+    return changed;
+  }
+
+  function migrate(d) {
+    return migrateBills(d);
   }
 
   // Garante categorias de receita padrão sem apagar dados existentes.
@@ -90,7 +114,9 @@ FC.Store = (function () {
     const raw = data && data.data ? data.data : null;
     if (raw && Array.isArray(raw.categories)) {
       db = ensureShape(raw);
-      if (ensureIncomeCategories()) scheduleSave();
+      const novasCats = ensureIncomeCategories();
+      const migrou = migrate(db);
+      if (novasCats || migrou) scheduleSave();
     } else {
       // Cofre vazio (primeira vez): cria com as categorias padrão.
       db = seed();
@@ -149,10 +175,18 @@ FC.Store = (function () {
           if (row.updated_by && myId && row.updated_by === myId) return;
           if (row.data && Array.isArray(row.data.categories)) {
             db = ensureShape(row.data);
+            migrate(db);
             window.dispatchEvent(new CustomEvent("fc:remote"));
           }
         })
       .subscribe();
+  }
+
+  // Ajustes que todo carregamento local precisa (categorias padrão + migrações).
+  function prepararLocal() {
+    const novasCats = ensureIncomeCategories();
+    const migrou = migrate(db);
+    if (novasCats || migrou) saveLocal();
   }
 
   // ---------- API pública (assíncrona) ----------
@@ -171,11 +205,11 @@ FC.Store = (function () {
           online = false;
           window.FC_MODE = "offline";
           loadLocal();
-          if (ensureIncomeCategories()) saveLocal();
+          prepararLocal();
         }
       } else {
         loadLocal();
-        if (ensureIncomeCategories()) saveLocal();
+        prepararLocal();
       }
       return true;
     })();
@@ -198,12 +232,14 @@ FC.Store = (function () {
     return item;
   }
   async function update(collection, id, patch) {
+    if (!db) await init();
     const arr = db[collection] || [];
     const i = arr.findIndex((x) => x.id === id);
     if (i >= 0) { arr[i] = { ...arr[i], ...patch }; scheduleSave(); return arr[i]; }
     return null;
   }
   async function remove(collection, id) {
+    if (!db) await init();
     db[collection] = (db[collection] || []).filter((x) => x.id !== id);
     scheduleSave();
     return true;

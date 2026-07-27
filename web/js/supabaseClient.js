@@ -4,7 +4,15 @@
  * =========================================================== */
 (function () {
   const cfg = window.FC_CONFIG || {};
-  const hasConfig = cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY;
+
+  // Trava de desenvolvimento: força o modo offline neste aparelho, para
+  // testar as telas sem entrar no cofre da família. Ligue no console com
+  //   localStorage.setItem("fc_force_offline", "1")
+  // e desligue com localStorage.removeItem("fc_force_offline").
+  let forcarOffline = false;
+  try { forcarOffline = localStorage.getItem("fc_force_offline") === "1"; } catch (e) {}
+
+  const hasConfig = !forcarOffline && cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY;
   const hasLib = typeof window.supabase !== "undefined" && window.supabase.createClient;
 
   if (hasConfig && hasLib) {

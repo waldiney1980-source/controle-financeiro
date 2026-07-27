@@ -23,7 +23,6 @@
       <button data-page="income"><span class="ni">💰</span><span class="nl">Receitas</span></button>
       <button data-page="cards"><span class="ni">💳</span><span class="nl">Cartões</span></button>
       <button data-page="bills"><span class="ni">📌</span><span class="nl">Contas</span><span class="nav-badge" id="billsBadge"></span></button>
-      <button data-page="budget"><span class="ni">📊</span><span class="nl">Orçamento</span></button>
       <button data-page="goals"><span class="ni">🎯</span><span class="nl">Metas</span></button>
       <button data-page="forecast"><span class="ni">🔮</span><span class="nl">Projeções</span></button>
       <button data-page="import"><span class="ni">📥</span><span class="nl">Importar</span></button>
@@ -45,7 +44,7 @@
       <!-- Hero: saldo total -->
       <div class="hero">
         <div class="hero-top">
-          <span class="hero-label">Saldo do mês (meta − gastos)</span>
+          <span class="hero-label">Saldo do mês (o que entrou − o que saiu)</span>
           <button class="eye" id="toggleBalance" title="Mostrar/ocultar saldo">👁️</button>
         </div>
         <div class="hero-value" id="kpiSaldo">R$ 0,00</div>
@@ -71,6 +70,12 @@
         <div class="card kpi"><div class="label">Comprometimento da renda</div><div class="value" id="kpiComprometimento">0%</div><div class="bar"><div class="fill" id="barComprometimento"></div></div></div>
         <div class="card kpi"><div class="label">Reserva de emergência</div><div class="value" id="kpiReserva">R$ 0,00</div><div class="hint" id="hintReserva"></div></div>
         <div class="card kpi"><div class="label">Capacidade de investir</div><div class="value" id="kpiCapacidade">R$ 0,00</div></div>
+      </div>
+
+      <!-- Meta do mês + o que foi lançado hoje -->
+      <div class="grid two section">
+        <div class="card"><div class="section-title">🎯 Meta de gastos do mês</div><div id="metaMes"></div></div>
+        <div class="card"><div class="section-title">📅 Lançamentos de hoje</div><div id="todayList"></div></div>
       </div>
 
       <!-- Próximos lançamentos -->
@@ -125,26 +130,21 @@
     <!-- CONTAS A PAGAR -->
     <section id="page-bills" class="page hidden">
       <header class="top">
-        <div><h1>Contas a pagar</h1><p>Lance despesas, marque as pagas e acompanhe os vencimentos.</p></div>
+        <div><h1>Contas a pagar</h1><p>Um mês por vez. Conta mensal se repete sozinha — e cada mês tem seu próprio valor e seu próprio “paguei”.</p></div>
         <button class="btn" data-action="new-bill">+ Nova conta</button>
       </header>
       <div id="billsAlert"></div>
+      <div class="filters section">
+        <div class="filt"><label>📅 Mês</label><select id="billsMes"></select></div>
+      </div>
+      <div class="card section" id="billsResumo"></div>
       <div class="card">
         <table class="table">
-          <thead><tr><th>Descrição</th><th>Categoria</th><th>Vencimento</th><th class="right">Valor</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Descrição</th><th>Categoria</th><th>Vencimento</th><th class="right">Valor do mês</th><th>Status</th><th></th></tr></thead>
           <tbody id="billsTable"></tbody>
         </table>
-        <div class="empty hidden" id="billsEmpty">Nenhuma conta cadastrada. Clique em “+ Nova conta”.</div>
+        <div class="empty hidden" id="billsEmpty">Nenhuma conta neste mês. Clique em “+ Nova conta”.</div>
       </div>
-    </section>
-
-    <!-- ORÇAMENTO -->
-    <section id="page-budget" class="page hidden">
-      <header class="top">
-        <div><h1>Orçamento mensal</h1><p>Um teto único para o mês (todas as categorias). Inclui suas despesas e contas a pagar.</p></div>
-        <button class="btn" data-action="new-budget">+ Definir teto mensal</button>
-      </header>
-      <div class="card"><div id="budgetList"></div></div>
     </section>
 
     <!-- METAS -->
@@ -162,6 +162,7 @@
       <header class="top">
         <div><h1>Projeções de fluxo de caixa</h1><p>Baseado em receitas/despesas recorrentes e parcelas.</p></div>
       </header>
+      <div class="card section"><div class="section-title">🏦 Saldo em conta</div><div id="saldoConta"></div></div>
       <div class="grid cards">
         <div class="card kpi"><div class="label">30 dias</div><div class="value" id="fc30">R$ 0,00</div></div>
         <div class="card kpi"><div class="label">90 dias</div><div class="value" id="fc90">R$ 0,00</div></div>
@@ -175,13 +176,13 @@
     <!-- IMPORTAR -->
     <section id="page-import" class="page hidden">
       <header class="top">
-        <div><h1>Importar dados</h1><p>Extrato bancário ou fatura — aceita CSV, Excel e PDF.</p></div>
+        <div><h1>Importar dados</h1><p>Extrato bancário ou fatura — aceita OFX, CSV, Excel e PDF.</p></div>
       </header>
       <div class="grid two">
         <div class="card">
           <div class="section-title">📤 Enviar arquivo</div>
-          <p class="hint">Formatos aceitos: <b>CSV</b>, <b>Excel</b> (.xlsx / .xls) e <b>PDF</b>. O sistema lê o arquivo, identifica as colunas e sugere categorias automaticamente.</p>
-          <input type="file" id="csvFile" accept=".csv,.xlsx,.xls,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          <p class="hint">Formatos aceitos: <b>OFX</b> (o extrato que o banco baixa), <b>CSV</b>, <b>Excel</b> (.xlsx / .xls) e <b>PDF</b>. O app lê o arquivo, sugere categorias e <b>marca o que já foi importado antes</b>, para nada entrar em dobro.</p>
+          <input type="file" id="csvFile" accept=".ofx,.qfx,.csv,.xlsx,.xls,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           <div id="importPreview" class="section"></div>
         </div>
         <div class="card">
@@ -207,6 +208,7 @@
         <div class="section-title">🎨 Aparência — foto de fundo</div>
         <p class="hint">Escolha uma foto sua para aparecer <b>bem discreta</b> no fundo do app. Fica salva só neste aparelho.</p>
         <input type="file" id="bgPhoto" accept="image/*">
+        <div id="bgStatus" class="hint" style="margin:10px 0 0"></div>
         <div><button class="btn secondary tiny" id="bgRemove" type="button" style="margin-top:12px">Remover foto de fundo</button></div>
       </div>
 
@@ -246,6 +248,7 @@
 <script src="js/supabaseClient.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/store.js"></script>
+<script src="js/bills.js"></script>
 <script src="js/forecast.js"></script>
 <script src="js/app.js"></script>
 </body>

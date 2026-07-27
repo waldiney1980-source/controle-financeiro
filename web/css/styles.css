@@ -104,6 +104,16 @@ body{
 .btn.tiny{padding:7px 12px;font-size:12px;border-radius:9px}
 .link-danger{background:none;border:0;color:var(--bad);cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;opacity:.8}
 .link-danger:hover{opacity:1;text-decoration:underline}
+.link{background:none;border:0;color:var(--accent);cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;opacity:.85;padding:0 8px 0 0}
+.link:hover{opacity:1;text-decoration:underline}
+.nowrap{white-space:nowrap}
+/* Valor editável direto na linha (contas a pagar) */
+.bill-val{
+  width:110px;text-align:right;padding:7px 9px;border-radius:9px;
+  background:rgba(255,255,255,.05);border:1px solid var(--line-strong);
+  color:var(--text);font-family:inherit;font-size:13px;font-weight:700
+}
+.bill-val:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,.18)}
 
 /* ---------------- Hero: saldo (estilo app de banco) ---------------- */
 .hero{
