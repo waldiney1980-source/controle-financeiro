@@ -36,9 +36,9 @@
   <main class="main">
     <!-- DASHBOARD -->
     <section id="page-dashboard" class="page">
-      <header class="top">
+      <header class="top compacto">
         <div><h1>Início</h1><p>Seu resumo financeiro.</p></div>
-        <button class="btn" data-action="new-expense">+ Novo lançamento</button>
+        <button class="btn fab" data-action="new-expense"><span class="fab-mais">+</span><span class="fab-txt">Novo lançamento</span></button>
       </header>
 
       <!-- Hero: quanto ainda dá para gastar -->
@@ -57,14 +57,17 @@
         </div>
       </div>
 
-      <!-- Filtros interativos -->
-      <div class="filters section" id="dashFilters">
-        <div class="filt"><label>👤 Pessoa</label><select id="fPessoa"><option value="">Todos</option></select></div>
-        <div class="filt"><label>📅 Mês</label><select id="fMes"><option value="">Todos os meses</option></select></div>
-        <div class="filt"><label>🏷️ Categoria</label><select id="fCategoria"><option value="">Todas</option></select></div>
-        <div class="filt"><label>🔀 Tipo</label><select id="fTipo"><option value="">Tudo</option><option value="despesa">Só despesas</option><option value="receita">Só receitas</option></select></div>
-        <button class="btn secondary tiny" id="fLimpar" type="button">✕ Limpar</button>
-      </div>
+      <!-- Filtros: recolhidos, para não separarem o saldo do conteúdo -->
+      <details class="filtros section" id="dashFilters">
+        <summary><span id="filtroResumo">Filtros</span></summary>
+        <div class="filters">
+          <div class="filt"><label>👤 Pessoa</label><select id="fPessoa"><option value="">Todos</option></select></div>
+          <div class="filt"><label>📅 Mês</label><select id="fMes"><option value="">Todos os meses</option></select></div>
+          <div class="filt"><label>🏷️ Categoria</label><select id="fCategoria"><option value="">Todas</option></select></div>
+          <div class="filt"><label>🔀 Tipo</label><select id="fTipo"><option value="">Tudo</option><option value="despesa">Só despesas</option><option value="receita">Só receitas</option></select></div>
+          <button class="btn secondary tiny" id="fLimpar" type="button">✕ Limpar</button>
+        </div>
+      </details>
 
       <!-- Gasto dia a dia -->
       <div class="card section">

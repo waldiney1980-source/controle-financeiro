@@ -130,6 +130,21 @@
     fillSelect($("#fCategoria"), cats, dashFilter.categoria, "Todas");
     // Tipo (opções fixas no HTML)
     const ft = $("#fTipo"); if (ft) ft.value = dashFilter.tipo || "";
+    // Fechado, o bloco precisa dizer o que está filtrando.
+    const resumo = $("#filtroResumo");
+    if (resumo) {
+      const ativos = [];
+      if (dashFilter.mes) ativos.push(mesLabel(dashFilter.mes));
+      if (dashFilter.pessoa) ativos.push(dashFilter.pessoa);
+      if (dashFilter.categoria) {
+        const c = Store.categoryById(dashFilter.categoria);
+        if (c) ativos.push(c.nome);
+      }
+      if (dashFilter.tipo) ativos.push(dashFilter.tipo === "receita" ? "só receitas" : "só despesas");
+      resumo.innerHTML = ativos.length
+        ? `Filtros: <span class="filtros-ativos">${esc(ativos.join(" · "))}</span>`
+        : "Filtros";
+    }
   }
   function filtrosAtivos() {
     return !!(dashFilter.pessoa || dashFilter.mes || dashFilter.categoria || dashFilter.tipo);
@@ -564,8 +579,29 @@
 
     const hl = $("#heroLabel");
     if (hl) hl.textContent = disponivel < 0 ? "Faltou este mês" : "Disponível para gastar";
+
+    // O cartão muda de cor conforme o mês: azul tranquilo, âmbar quando
+    // sobrou pouco para os dias que faltam, vermelho quando já estourou.
+    const hero = $(".hero");
+    if (hero) {
+      const apertado = disponivel >= 0 && receitas > 0 && disponivel < despesas * 0.15;
+      hero.classList.toggle("negativo", disponivel < 0);
+      hero.classList.toggle("alerta", !(disponivel < 0) && apertado);
+    }
+    const tilePorDia = $("#kpiPorDia") && $("#kpiPorDia").closest(".tile");
+    if (tilePorDia) tilePorDia.classList.toggle("critico", disponivel <= 0);
+
+    // O subtítulo não repete mais os dois números que já estão nos blocos.
     const hu = $("#heroUpdated");
-    if (hu) hu.textContent = `${money(receitas)} entrou − ${money(despesas)} saiu • ${escopo}${quem}`;
+    if (hu) {
+      const partes = [];
+      if (ehCorrente) partes.push(`Faltam ${diasRestantes} dia${diasRestantes > 1 ? "s" : ""} de ${mesLabel(mesRitmo)}`);
+      else partes.push(escopo);
+      const teto = (budgets || []).reduce((s, b) => s + (+b.limite || 0), 0);
+      if (teto > 0) partes.push(`meta ${pct((despesas / teto) * 100)} usada`);
+      if (quem) partes.push(dashFilter.pessoa);
+      hu.textContent = partes.join(" · ");
+    }
 
     // Taxa de poupança e comprometimento saem do MESMO recorte mostrado nos
     // cartões acima — antes vinham só do mês corrente e contradiziam a tela.
