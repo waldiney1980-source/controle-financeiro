@@ -49,11 +49,16 @@
         </div>
         <div class="hero-value" id="kpiSaldo">R$ 0,00</div>
         <div class="hero-sub" id="heroUpdated">Atualizado agora</div>
+        <!-- A conta que gera o número acima, aberta linha a linha -->
+        <div class="hero-calc">
+          <div class="hc-row"><span>Receitas</span><b class="positive" id="brReceitas">R$ 0,00</b></div>
+          <div class="hc-row"><span>− Despesas</span><b id="brDespesas">R$ 0,00</b></div>
+          <div class="hc-row"><span>− Cartão</span><b id="brCartao">R$ 0,00</b></div>
+          <div class="hc-row"><span>− Contas</span><b id="brContas">R$ 0,00</b></div>
+        </div>
         <div class="hero-tiles">
-          <div class="tile"><span class="tile-ic up">↗</span><div><small id="lblReceitas">Ganhos</small><b class="positive" id="kpiReceitas">R$ 0,00</b></div></div>
-          <div class="tile"><span class="tile-ic down">↘</span><div><small id="lblDespesas">Gastos</small><b class="negative" id="kpiDespesas">R$ 0,00</b></div></div>
-          <div class="tile"><span class="tile-ic dia">Ø</span><div><small id="lblMediaDia">Gasto por dia</small><b id="kpiMediaDia">R$ 0,00</b></div></div>
-          <div class="tile"><span class="tile-ic livre">✓</span><div><small id="lblPorDia">Pode gastar por dia</small><b id="kpiPorDia">R$ 0,00</b></div></div>
+          <div class="tile"><span class="tile-ic down">☀</span><div><small>Gasto de hoje</small><b id="kpiHoje">R$ 0,00</b></div></div>
+          <div class="tile"><span class="tile-ic dia">Σ</span><div><small id="lblMes">Gasto do mês</small><b id="kpiMes">R$ 0,00</b></div></div>
         </div>
       </div>
 
@@ -69,25 +74,15 @@
         </div>
       </details>
 
-      <!-- Gasto dia a dia -->
-      <div class="card section">
-        <div class="section-title">Gasto dia a dia</div>
-        <div id="dailyChart"></div>
-      </div>
-
       <!-- Meta do mês + o que foi lançado hoje -->
       <div class="grid two section">
-        <div class="card"><div class="section-title">🎯 Meta de gastos do mês</div><div id="metaMes"></div></div>
         <div class="card"><div class="section-title">📅 Lançamentos de hoje</div><div id="todayList"></div></div>
+        <div class="card"><div class="section-title">🎯 Meta de gastos do mês</div><div id="metaMes"></div></div>
       </div>
 
-      <!-- Para onde foi o dinheiro -->
+      <!-- Para onde foi + o que vem aí -->
       <div class="grid two section">
-        <div class="card">
-          <div class="section-title">Para onde foi o dinheiro</div>
-          <div id="gastosDetalhe"></div>
-          <div id="categoryChart" style="margin-top:18px"></div>
-        </div>
+        <div class="card"><div class="section-title">Despesas por categoria</div><div id="categoryChart"></div></div>
         <div class="card"><div class="section-title">Próximos lançamentos</div><div id="upcoming"></div></div>
       </div>
 
