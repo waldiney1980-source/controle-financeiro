@@ -296,6 +296,70 @@
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   }
 
+  // ---------- Despesas dia a dia ----------
+  // Uma barra por dia do mês (despesas de conta e cartão + contas que vencem
+  // no dia), com o valor escrito sobre cada barra. "1,3k" em vez de
+  // "R$ 1.300,00": por extenso os números não cabem lado a lado.
+  function valorCurto(v) {
+    if (v >= 1000) {
+      const k = v / 1000;
+      return (k >= 10 ? Math.round(k) : (Math.round(k * 10) / 10).toLocaleString(cfg.LOCALE || "pt-BR")) + "k";
+    }
+    return String(Math.round(v));
+  }
+
+  function renderDespesasDia(tx, bills, ym) {
+    const wrap = $("#dailyChart"); if (!wrap) return;
+    const Bl = FC.Bills;
+    const nDias = Bl.diasNoMes(ym);
+    const hoje = today();
+    const ehMesCorrente = ym === hoje.slice(0, 7);
+    const diaHoje = ehMesCorrente ? +hoje.slice(8, 10) : 0;
+
+    const porDia = new Array(nDias + 1).fill(0);
+    ocorrenciasTx(tx, ym, ym).forEach((t) => {
+      if (t.tipo !== "despesa") return;
+      const d = +String(t.data || "").slice(8, 10);
+      if (d >= 1 && d <= nDias) porDia[d] += +t.valor || 0;
+    });
+    Bl.ocorrenciasDoMes(bills, ym).forEach((o) => {
+      const d = +String(o.venc || "").slice(8, 10);
+      if (d >= 1 && d <= nDias) porDia[d] += o.valor;
+    });
+
+    if (!porDia.some((v) => v > 0)) {
+      wrap.innerHTML = `<div class="empty">Nenhuma despesa em ${mesLabel(ym)}.</div>`;
+      return;
+    }
+
+    const W = 720, H = 175, padT = 22, padB = 18;   // padT abre espaço para o valor
+    const plotH = H - padT - padB;
+    const maxV = Math.max(...porDia);
+    const passo = W / nDias;
+    const larg = Math.max(3, passo - 4);
+    let barras = "", valores = "", rotulos = "";
+    for (let d = 1; d <= nDias; d++) {
+      const v = porDia[d];
+      const cx = (d - 1) * passo + passo / 2;
+      if (v > 0) {
+        const h = Math.max(2, (v / maxV) * plotH);
+        const y = padT + plotH - h;
+        const cor = d === diaHoje ? "#a78bfa" : "#60a5fa";
+        barras += `<rect x="${(cx - larg / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${larg.toFixed(1)}" height="${h.toFixed(1)}" rx="2.5" fill="${cor}"><title>Dia ${d}: ${money(v)}</title></rect>`;
+        valores += `<text x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" text-anchor="middle" font-size="8.6" font-weight="700" fill="#dbe6f5">${valorCurto(v)}</text>`;
+      }
+      if (d === 1 || d % 5 === 0 || d === nDias)
+        rotulos += `<text x="${cx.toFixed(1)}" y="${H - 5}" text-anchor="middle" font-size="9.5" fill="#8ba0c0">${d}</text>`;
+    }
+    wrap.innerHTML = `
+      <div class="dia-chart">
+        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Despesas por dia em ${mesLabel(ym)}">
+          ${barras}${valores}${rotulos}
+        </svg>
+      </div>
+      <div class="hint" style="margin-top:8px">Valores em reais; "1,3k" = R$ 1.300. Roxo é hoje. Passe o dedo ou o mouse na barra para o valor exato.</div>`;
+  }
+
   // ---------- Meta de gastos do mês ----------
   function renderMeta(budgets, gastos, ym) {
     const wrap = $("#metaMes"); if (!wrap) return;
@@ -538,6 +602,7 @@
 
     // Meta: usa o mesmo gasto-do-mês do bloco do topo.
     renderMeta(budgets, gastoMesTile, mesRitmo);
+    renderDespesasDia(tx, bills, mesRitmo);
 
     renderHoje(tx, bills, catById);
     renderUpcoming(tx, catById);
