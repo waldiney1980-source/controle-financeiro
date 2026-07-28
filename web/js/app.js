@@ -526,11 +526,9 @@
       hu.textContent = partes.join(" · ");
     }
 
-    // Taxa de poupança e comprometimento saem do MESMO recorte mostrado nos
-    // cartões acima — antes vinham só do mês corrente e contradiziam a tela.
-    const taxaPoupanca = receitas > 0 ? ((receitas - despesas) / receitas) * 100 : 0;
+    // Comprometimento sai do MESMO recorte mostrado nos cartões acima —
+    // antes vinha só do mês corrente e contradizia a tela.
     const comprometimento = receitas > 0 ? (despesas / receitas) * 100 : 0;
-    $("#kpiPoupanca").textContent = pct(taxaPoupanca);
     $("#kpiComprometimento").textContent = pct(comprometimento);
     const barC = $("#barComprometimento");
     barC.style.width = Math.min(100, Math.max(0, comprometimento)) + "%";
