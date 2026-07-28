@@ -43,6 +43,9 @@
 
   // ---------- Filtros do dashboard ----------
   const dashFilter = { pessoa: "", mes: "", categoria: "", tipo: "" };
+  // true só quando foi o USUÁRIO que trocou o mês no filtro. O padrão que o
+  // app escolhe ao abrir não conta — o gráfico diário fica no mês corrente.
+  let mesEscolhido = false;
 
   // Filtros que não são de mês (o mês é resolvido ao gerar as ocorrências).
   function passaNoFiltro(t) {
@@ -310,6 +313,8 @@
 
   function renderDespesasDia(tx, bills, ym) {
     const wrap = $("#dailyChart"); if (!wrap) return;
+    const titulo = $("#dailyTitle");
+    if (titulo) titulo.textContent = "Despesas dia a dia — " + mesLabel(ym);
     const Bl = FC.Bills;
     const nDias = Bl.diasNoMes(ym);
     const hoje = today();
@@ -539,10 +544,17 @@
     setMoney("kpiSaldo", disponivel);
 
     const Bl = FC.Bills;
-    const mesRitmo = dashFilter.mes || ateYm;
     const hojeStr = today();
-    const nDias = Bl.diasNoMes(mesRitmo);
-    const ehCorrente = mesRitmo === hojeStr.slice(0, 7);
+    const mesAtual = hojeStr.slice(0, 7);
+
+    // Mês do "gasto do dia/do mês", da meta e do gráfico diário: o CORRENTE,
+    // a menos que o usuário tenha escolhido outro no filtro. O painel pode
+    // abrir num mês futuro (onde há movimento lançado), mas o que se gastou
+    // hoje pertence a hoje — a despesa do dia sumia do gráfico quando o
+    // filtro estava num mês que ainda nem começou.
+    const mesDia = (mesEscolhido && dashFilter.mes) ? dashFilter.mes : mesAtual;
+    const ehCorrente = mesDia === mesAtual;
+    const nDias = Bl.diasNoMes(mesDia);
     const diaAtual = ehCorrente ? +hojeStr.slice(8, 10) : 0;
     const diasRestantes = ehCorrente ? Math.max(1, nDias - diaAtual + 1) : nDias;
 
@@ -556,12 +568,12 @@
     // Gasto do MÊS visto, inteiro, sem os outros filtros — é o mesmo número
     // que a meta usa, para os dois nunca discordarem.
     const gastoMesTile =
-      ocorrenciasTx(tx, mesRitmo, mesRitmo).filter((t) => t.tipo === "despesa")
+      ocorrenciasTx(tx, mesDia, mesDia).filter((t) => t.tipo === "despesa")
         .reduce((s, t) => s + (+t.valor || 0), 0) +
-      Bl.ocorrenciasDoMes(bills, mesRitmo).reduce((s, o) => s + o.valor, 0);
+      Bl.ocorrenciasDoMes(bills, mesDia).reduce((s, o) => s + o.valor, 0);
     setMoney("kpiMes", gastoMesTile);
     const lm = $("#lblMes");
-    if (lm) lm.textContent = ehCorrente ? "Gasto do mês" : `Gasto · ${mesLabel(mesRitmo)}`;
+    if (lm) lm.textContent = ehCorrente ? "Gasto do mês" : `Gasto · ${mesLabel(mesDia)}`;
 
     // O rótulo diz de onde o número vem; a conta aberta logo abaixo mostra
     // cada parcela. "Faltou" sozinho deixava a origem do valor no escuro.
@@ -581,8 +593,10 @@
     // O subtítulo não repete mais os dois números que já estão nos blocos.
     const hu = $("#heroUpdated");
     if (hu) {
+      // O subtítulo descreve o RECORTE do cartão (escopo do filtro), não o
+      // mês do gráfico diário — os dois podem diferir de propósito.
       const partes = [];
-      if (ehCorrente) partes.push(`Faltam ${diasRestantes} dia${diasRestantes > 1 ? "s" : ""} de ${mesLabel(mesRitmo)}`);
+      if (dashFilter.mes === mesAtual) partes.push(`Faltam ${diasRestantes} dia${diasRestantes > 1 ? "s" : ""} de ${mesLabel(mesAtual)}`);
       else partes.push(escopo);
       const teto = (budgets || []).reduce((s, b) => s + (+b.limite || 0), 0);
       if (teto > 0) partes.push(`meta ${pct((despesas / teto) * 100)} usada`);
@@ -601,8 +615,8 @@
     applyHide();
 
     // Meta: usa o mesmo gasto-do-mês do bloco do topo.
-    renderMeta(budgets, gastoMesTile, mesRitmo);
-    renderDespesasDia(tx, bills, mesRitmo);
+    renderMeta(budgets, gastoMesTile, mesDia);
+    renderDespesasDia(tx, bills, mesDia);
 
     renderHoje(tx, bills, catById);
     renderUpcoming(tx, catById);
@@ -1500,11 +1514,14 @@
     };
     bindFilter("fPessoa", "pessoa");
     bindFilter("fMes", "mes");
+    const fm = $("#fMes");
+    if (fm) fm.addEventListener("change", () => { mesEscolhido = !!fm.value; });
     bindFilter("fCategoria", "categoria");
     bindFilter("fTipo", "tipo");
     const limpar = $("#fLimpar");
     if (limpar) limpar.addEventListener("click", () => {
       dashFilter.pessoa = dashFilter.mes = dashFilter.categoria = dashFilter.tipo = "";
+      mesEscolhido = false;
       render();
     });
 
