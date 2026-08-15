@@ -258,6 +258,60 @@ FC.Fatura = (function () {
     };
   }
 
+  // ---------- Despesa que se repete todo mês ----------
+  // Assinatura, mensalidade, seguro e telefonia voltam em toda fatura. Elas
+  // entram marcadas como MENSAL, e aí o app já as projeta para a frente
+  // sozinho (em "Próximos lançamentos" e na projeção de saldo).
+  //
+  // Não vira conta a pagar de propósito: a conta seria somada ao gasto do
+  // cartão e o mês contaria a mesma despesa duas vezes. Como lançamento
+  // mensal do cartão, a repetição cede lugar à linha real assim que a
+  // próxima fatura é importada — que é a regra que o app já tem.
+  //
+  // Compra parcelada NUNCA é recorrente: ela tem fim (3/10 acaba na 10ª).
+  const RECORRENTES = [
+    /netflix|spotify|disney|hbo|globoplay|deezer|paramount|youtube ?premium|prime ?video/i,
+    /apple\.?com|itunes|google ?(one|storage|play)|microsoft|office ?365|adobe|dropbox|icloud/i,
+    /anthropic|openai|chatgpt|claude|midjourney|canva|notion|github/i,
+    /wellhub|gympass|smart ?fit|bodytech|selfit|panobianco|bluefit/i,
+    /\btim\b|\bclaro\b|\bvivo\b|\boi\b|nextel|net ?servi|sky\b/i,
+    /seguro|previd|icatu|porto ?seguro|bradesco ?seg|sulamerica|unimed|amil|golden ?cross/i,
+    /mensalidade|assinatura|anuidade|plano ?de|clube ?de|smiles|multiplus|livelo/i,
+    /uber ?one|ifood ?clube|rappi ?prime|amazon ?prime/i
+  ];
+
+  function ehRecorrente(desc, conhecidas) {
+    const chave = chaveSerie(desc);
+    if (conhecidas && chave && conhecidas.has(chave)) return true;
+    return RECORRENTES.some((re) => re.test(desc));
+  }
+
+  // Chave estável de uma despesa: ignora número de loja, cidade e acento,
+  // para "PANIFICACAO ATLANTICA RIO" casar de uma fatura para a outra.
+  function chaveSerie(desc) {
+    return String(desc || "").toLowerCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/\d+/g, " ").replace(/[^a-z ]+/g, " ")
+      .replace(/\s+/g, " ").trim()
+      .split(" ").filter((p) => p.length > 2).slice(0, 3).join(" ");
+  }
+
+  // Descrições que já apareceram em 2 ou mais competências diferentes nas
+  // faturas importadas antes. Isso é prova de repetição — vale mais do que
+  // qualquer lista fixa, e pega assinatura que a lista não conhece.
+  function recorrentesConhecidas(transacoes) {
+    const meses = {};
+    (transacoes || []).forEach((t) => {
+      if (!t.fatura_id || t.projecao) return;
+      const k = chaveSerie(t.descricao);
+      if (!k) return;
+      (meses[k] = meses[k] || new Set()).add(String(t.fatura_id).split(":")[1] || "");
+    });
+    const out = new Set();
+    Object.keys(meses).forEach((k) => { if (meses[k].size >= 2) out.add(k); });
+    return out;
+  }
+
   // ---------- Itens viram lançamentos ----------
   // Dia em que a fatura sai da conta. O cadastro do cartão manda; o
   // vencimento impresso no PDF é a reserva.
@@ -276,8 +330,19 @@ FC.Fatura = (function () {
   // Gera os lançamentos: os desta fatura + as parcelas que ainda faltam.
   // `categoriaDe` é injetada pelo app (é lá que mora o aprendizado).
   function expandir(itens, opcoes) {
-    const { competencia, card_id, dia_venc, categoriaDe, pessoa } = opcoes;
+    const { competencia, card_id, dia_venc, categoriaDe, pessoa, conhecidas } = opcoes;
     const faturaId = card_id + ":" + competencia;
+
+    // Assinatura cobra UMA vez por fatura. Se o mesmo estabelecimento
+    // aparece duas vezes no mesmo mês, é consumo variável (uso por demanda),
+    // não mensalidade — e marcar como mensal projetaria o dobro para sempre.
+    const vezes = {};
+    itens.forEach((it) => {
+      if (it.credito || it.parcelaTotal) return;
+      const k = chaveSerie(it.descricao);
+      if (k) vezes[k] = (vezes[k] || 0) + 1;
+    });
+
     const out = [];
     itens.forEach((it) => {
       // Pagamento da fatura anterior não é gasto: é a quitação do mês passado.
@@ -297,6 +362,10 @@ FC.Fatura = (function () {
       const n = it.parcelaTotal, i = it.parcelaAtual;
       const parcelada = n && i && n > 1;
       const sufixo = (k) => (parcelada ? ` (${k}/${n})` : "");
+      // Parcelada já tem prazo definido — não é recorrente. Estorno também não.
+      const recorrente = !parcelada && !it.credito &&
+        vezes[chaveSerie(it.descricao)] === 1 &&
+        ehRecorrente(it.descricao, conhecidas);
 
       // A parcela desta fatura
       out.push({
@@ -305,6 +374,8 @@ FC.Fatura = (function () {
         data: dataNoMes(competencia, dia_venc),
         projecao: false,
         parcela: parcelada ? `${i}/${n}` : null,
+        recorrencia: recorrente ? "mensal" : "nenhuma",
+        recorrente,
         catNome: cat ? cat.nome : "—"
       });
 
@@ -345,5 +416,8 @@ FC.Fatura = (function () {
     });
   }
 
-  return { lerLinhas, analisar, expandir, substituiveis, diaVencimento, valorBR, acharParcela };
+  return {
+    lerLinhas, analisar, expandir, substituiveis, diaVencimento,
+    valorBR, acharParcela, ehRecorrente, chaveSerie, recorrentesConhecidas
+  };
 })();

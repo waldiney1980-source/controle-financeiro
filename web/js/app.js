@@ -794,13 +794,27 @@
     return suggestCategory(desc);
   }
 
+  // A caixa aparece SEMPRE. Escondê-la quando não há cartão cadastrado
+  // deixava a tela sem explicação nenhuma — quem chegava aqui para importar
+  // a fatura não achava o campo e não descobria o que fazer.
   function renderFaturaBox(cards) {
     const box = $("#faturaBox"); if (!box) return;
-    box.style.display = cards.length ? "" : "none";
+    const semCartao = !cards.length;
+    const aviso = $("#fatSemCartao");
+    if (aviso) {
+      aviso.innerHTML = semCartao
+        ? `<div class="alert">Cadastre o cartão primeiro — é dele que vem o <b>dia de vencimento</b>, a data com que os lançamentos da fatura entram.
+           <div style="margin-top:10px"><button class="btn" data-action="new-card">+ Novo cartão</button></div></div>`
+        : "";
+    }
+    ["fatCard", "fatMes", "fatFile"].forEach((id) => {
+      const e = $("#" + id); if (e) e.disabled = semCartao;
+    });
     const sel = $("#fatCard");
     if (sel) {
       const atual = sel.value;
-      sel.innerHTML = cards.map((c) => `<option value="${c.id}">💳 ${esc(c.nome)}</option>`).join("");
+      sel.innerHTML = cards.map((c) => `<option value="${c.id}">💳 ${esc(c.nome)}</option>`).join("")
+        || `<option value="">— nenhum cartão cadastrado —</option>`;
       if (atual && cards.some((c) => c.id === atual)) sel.value = atual;
     }
     const mes = $("#fatMes");
@@ -819,13 +833,34 @@
       // O que o PDF diz manda sobre o que estava no campo — e o campo passa
       // a mostrar isso, para o usuário ver qual competência será gravada.
       if (res.competencia) $("#fatMes").value = res.competencia;
-      renderFaturaPreview(res, card);
+      renderFaturaPreview(res, card, true);
     } catch (e) {
       preview.innerHTML = `<div class="alert bad">Não consegui ler o PDF: ${esc(e.message)}</div>`;
     }
   }
 
-  function renderFaturaPreview(res, card) {
+  // Grava a fatura: primeiro apaga o que ela substitui, depois insere. Nesta
+  // ordem o total do mês passa a ser o da fatura nova — nunca a soma das duas.
+  async function gravarFatura(lancamentos, idx, substituir, competencia) {
+    for (const t of substituir) await Store.remove("transactions", t.id);
+    for (const i of idx) {
+      const { catNome, recorrente, ...rest } = lancamentos[i];
+      await Store.add("transactions", rest);
+      if (!rest.projecao) await aprenderCategoria(rest.descricao, rest.category_id);
+    }
+  }
+
+  function resumoImportacao(competencia, n, nSub, nFut, nRec) {
+    return `<div class="alert ok">✅ Fatura de ${mesLabel(competencia)} lançada: <b>${n} lançamento(s)</b>${
+      nSub ? `, substituindo ${nSub} anterior(es)` : ""}.
+      ${nFut ? `<br>🔮 ${nFut} parcela(s) futura(s) nos próximos meses.` : ""}
+      ${nRec ? `<br>🔁 ${nRec} despesa(s) marcada(s) como <b>mensal</b> — o app repete sozinho nos meses seguintes.` : ""}
+      <br><span class="hint">Confira em Despesas ou nos lançamentos do cartão abaixo. Reimportar esta fatura substitui tudo isto.</span></div>`;
+  }
+
+  // `auto` só vem true na leitura do PDF. Trocar cartão ou competência
+  // depois apenas redesenha — não pode gravar de novo por conta própria.
+  function renderFaturaPreview(res, card, auto) {
     const preview = $("#fatPreview");
     const competencia = $("#fatMes").value || res.competencia;
     if (!res.itens.length) {
@@ -838,7 +873,9 @@
     const diaVenc = FC.Fatura.diaVencimento(card, res.vencimento);
     const lancamentos = FC.Fatura.expandir(res.itens, {
       competencia, card_id: card.id, dia_venc: diaVenc,
-      categoriaDe: (desc, secao) => categoriaDaFatura(desc, secao), pessoa: currentPerson()
+      categoriaDe: (desc, secao) => categoriaDaFatura(desc, secao), pessoa: currentPerson(),
+      // O que já se repetiu em 2+ faturas importadas é recorrente comprovado.
+      conhecidas: FC.Fatura.recorrentesConhecidas(Store.allSync("transactions"))
     });
     faturaLida = { lancamentos, card, competencia, res };
 
@@ -863,11 +900,30 @@
         : `<div class="alert bad">⚠️ A soma do que eu li (<b>${money(somaFatura)}</b>) não bate com o total impresso na fatura (<b>${money(res.totalDeclarado)}</b>) — diferença de ${money(dif)}. Confira a lista abaixo antes de importar.</div>`;
     }
 
+    const recorrentes = daFatura.filter((l) => l.recorrente);
+    // Quando a soma bate com o total impresso na fatura, a leitura está
+    // comprovadamente certa e não há o que revisar — lança sozinho. Se não
+    // bate, alguma coisa escapou: aí a prévia abre para conferência.
+    const confere = res.totalDeclarado != null && Math.abs(res.totalDeclarado - somaFatura) < 0.05;
+    if (auto && confere) {
+      preview.innerHTML = `<div class="alert">⏳ Lançando ${lancamentos.length} lançamento(s)…</div>`;
+      gravarFatura(lancamentos, lancamentos.map((_, i) => i), substituir, competencia).then(() => {
+        preview.innerHTML = resumoImportacao(competencia, lancamentos.length,
+          substituir.length, futuros.length, recorrentes.length);
+        const f = $("#fatFile"); if (f) f.value = "";
+        faturaLida = null;
+        render();
+      }).catch((e) => {
+        preview.innerHTML = `<div class="alert bad">Erro ao gravar: ${esc(e.message)}</div>`;
+      });
+      return;
+    }
+
     const linhaItem = (l, i) => `
       <tr class="${l.projecao ? "muted-row" : ""}">
         <td><input type="checkbox" class="fat-ck" data-i="${i}" checked></td>
         <td>${l.data_compra ? fmtDate(l.data_compra) : "—"}</td>
-        <td>${esc(l.descricao)}${l.projecao ? ` <span class="badge warn">🔮 ${mesLabel(String(l.data).slice(0, 7))}</span>` : ""}${l.estorno ? ' <span class="badge">↩ estorno</span>' : ""}${l.pessoa ? `<div class="muted">${esc(l.pessoa)}</div>` : ""}</td>
+        <td>${esc(l.descricao)}${l.projecao ? ` <span class="badge warn">🔮 ${mesLabel(String(l.data).slice(0, 7))}</span>` : ""}${l.estorno ? ' <span class="badge">↩ estorno</span>' : ""}${l.recorrente ? ' <span class="badge">🔁 mensal</span>' : ""}${l.pessoa ? `<div class="muted">${esc(l.pessoa)}</div>` : ""}</td>
         <td><select class="fat-cat" data-i="${i}">${optsDe(l.category_id)}</select></td>
         <td class="right ${l.valor < 0 ? "positive" : "negative"}">${money(l.valor)}</td>
       </tr>`;
@@ -912,18 +968,11 @@
       if (!idx.length) { alert("Marque pelo menos um lançamento para importar."); return; }
       const btn = $("#confirmFatura");
       btn.disabled = true; btn.textContent = "Importando…";
-
-      // Primeiro apaga o que esta fatura substitui, depois grava. Nesta ordem
-      // o total do mês fica sendo o da fatura nova — nunca a soma das duas.
-      for (const t of substituir) await Store.remove("transactions", t.id);
-      for (const i of idx) {
-        const { catNome, ...rest } = lancamentos[i];
-        await Store.add("transactions", rest);
-        if (!rest.projecao) await aprenderCategoria(rest.descricao, rest.category_id);
-      }
-      preview.innerHTML = `<div class="alert ok">✅ Fatura de ${mesLabel(competencia)} importada:
-        <b>${idx.length} lançamento(s)</b>${substituir.length ? `, substituindo ${substituir.length} anterior(es)` : ""}.</div>`;
-      $("#fatFile").value = "";
+      await gravarFatura(lancamentos, idx, substituir, competencia);
+      const marcadosFut = idx.filter((i) => lancamentos[i].projecao).length;
+      const marcadosRec = idx.filter((i) => lancamentos[i].recorrente).length;
+      preview.innerHTML = resumoImportacao(competencia, idx.length, substituir.length, marcadosFut, marcadosRec);
+      const f = $("#fatFile"); if (f) f.value = "";
       faturaLida = null;
       render();
     };
