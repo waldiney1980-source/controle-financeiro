@@ -5,7 +5,7 @@
 (function () {
   // Versão do app, mostrada no rodapé da barra lateral. Anda junto com o
   // CACHE do sw.js — as duas sobem no mesmo commit.
-  const APP_VERSION = "v25";
+  const APP_VERSION = "v26";
 
   const { Store, Forecast } = FC;
   const cfg = window.FC_CONFIG || {};
@@ -486,6 +486,7 @@
 
     renderDashboard(tx, accounts, cards, budgets, goals, catById, bills);
     renderMesCartao(tx, bills);
+    renderProjecao(tx, bills);
     renderIncome(tx, catById);
     renderCards(cards, tx);
     renderFaturaBox(cards);
@@ -741,6 +742,153 @@
     }
     const hero = $("#mesResumo");
     if (hero) hero.classList.toggle("negativo", sobra < 0);
+  }
+
+  // ---------- Para onde o mês caminha ----------
+  // Quebra o compromisso de cada mês em quatro pedaços que se comportam de
+  // maneiras diferentes: fixo fora do cartão não muda, parcela tem data para
+  // acabar, recorrência volta todo mês e o variável é o que está na sua mão.
+  const PROJ_MESES = 9;
+  let projCenario = "sem-novas";
+
+  const PROJ_FAIXAS = [
+    { chave: "fixos",       cor: "#64748b", nome: "Fixos fora do cartão" },
+    { chave: "parcelas",    cor: "#8b5cf6", nome: "Parcelas já contratadas" },
+    { chave: "recorrentes", cor: "#eab308", nome: "Recorrências fixas" },
+    { chave: "variavel",    cor: "#ef4444", nome: "Gasto variável" }
+  ];
+
+  function fatiasDoMes(tx, bills, ym, variavelBase) {
+    const noMes = (t) => String(t.data || "").slice(0, 7) === ym;
+    const doCartao = (t) => !!t.card_id || t.forma === "cartao";
+
+    // Parcela: valor exato, veio da fatura — não é estimativa.
+    const parcelas = (tx || [])
+      .filter((t) => t.tipo === "despesa" && doCartao(t) && t.parcela && noMes(t))
+      .reduce((s, t) => s + (+t.valor || 0), 0);
+
+    // Recorrência do cartão: a linha real no mês importado e a repetição
+    // que o app projeta nos meses seguintes.
+    const ocorr = ocorrenciasTx(tx || [], ym, ym);
+    const recorrentes = ocorr
+      .filter((t) => t.tipo === "despesa" && doCartao(t) && t.recorrencia === "mensal" && !t.parcela)
+      .reduce((s, t) => s + (+t.valor || 0), 0);
+
+    const fixos = despesasGeraisDoMes(bills, tx, ym).reduce((s, l) => s + l.valor, 0);
+
+    // Variável é o resto da fatura: o que não é parcela nem recorrência.
+    // Só existe de verdade no mês importado; para a frente, repete o nível
+    // de hoje — é estimativa, e a tela diz isso.
+    let variavel;
+    if (variavelBase == null) {
+      const totalCartao = (tx || [])
+        .filter((t) => t.tipo === "despesa" && doCartao(t) && noMes(t))
+        .reduce((s, t) => s + (+t.valor || 0), 0);
+      variavel = Math.max(0, totalCartao - parcelas - recorrentes);
+    } else {
+      variavel = variavelBase;
+    }
+
+    const renda = ocorr.filter((t) => t.tipo === "receita").reduce((s, t) => s + (+t.valor || 0), 0);
+    return { ym, fixos, parcelas, recorrentes, variavel, renda,
+             total: fixos + parcelas + recorrentes + variavel };
+  }
+
+  function serieProjecao(tx, bills, ym0, cenario) {
+    const base = fatiasDoMes(tx, bills, ym0, null);
+    const out = [base];
+    for (let i = 1; i < PROJ_MESES; i++) {
+      const m = fatiasDoMes(tx, bills, FC.Bills.ymAdd(ym0, i), base.variavel);
+      // Mantendo o ritmo, a parcela que termina é reposta por uma nova —
+      // o bloco roxo não encolhe. É o cenário de quem continua parcelando.
+      if (cenario === "ritmo") m.parcelas = Math.max(m.parcelas, base.parcelas);
+      m.total = m.fixos + m.parcelas + m.recorrentes + m.variavel;
+      out.push(m);
+    }
+    return out;
+  }
+
+  function renderProjecao(tx, bills) {
+    const wrap = $("#projecaoChart"); if (!wrap) return;
+    const ym0 = mesEmFoco();
+    const serie = serieProjecao(tx, bills, ym0, projCenario);
+    const outra = serieProjecao(tx, bills, ym0, projCenario === "ritmo" ? "sem-novas" : "ritmo");
+
+    if (!serie.some((m) => m.total > 0)) {
+      wrap.innerHTML = '<div class="empty">Importe a fatura para ver os próximos meses.</div>';
+      return;
+    }
+
+    const W = 980, H = 380, padL = 56, padR = 18, padT = 40, padB = 66;
+    const plotH = H - padT - padB;
+    const n = serie.length;
+    const step = (W - padL - padR) / n;
+    const barW = Math.min(58, step * 0.5);
+    const maxV = Math.max(
+      ...serie.map((m) => m.total), ...outra.map((m) => m.total),
+      ...serie.map((m) => m.renda), 1) * 1.12;
+    const y = (v) => padT + plotH - (v / maxV) * plotH;
+
+    // Eixo: cinco marcas, no formato curto que o app já usa ("8,2k").
+    let eixo = "";
+    for (let k = 0; k <= 4; k++) {
+      const v = (maxV / 4) * k, yy = y(v);
+      eixo += `<line x1="${padL}" x2="${W - padR}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}" stroke="rgba(255,255,255,.06)"/>
+        <text x="${padL - 8}" y="${(yy + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="#8ba0c0">${valorCurto(v)}</text>`;
+    }
+
+    let barras = "", rotulos = "", pontilhado = "", linhaRenda = "";
+    serie.forEach((m, i) => {
+      const cx = padL + step * i + step / 2;
+      const x0 = cx - barW / 2;
+
+      // Empilha de baixo para cima, na ordem das faixas.
+      let acc = 0;
+      PROJ_FAIXAS.forEach((f) => {
+        const v = m[f.chave];
+        if (v <= 0) return;
+        const yTopo = y(acc + v), alt = Math.max(1, y(acc) - yTopo);
+        barras += `<rect x="${x0.toFixed(1)}" y="${yTopo.toFixed(1)}" width="${barW.toFixed(1)}" height="${alt.toFixed(1)}"
+          fill="${f.cor}"><title>${mesLabel(m.ym)} · ${f.nome}: ${money(v)}</title></rect>`;
+        acc += v;
+      });
+
+      // Contorno do outro cenário, para comparar sem trocar de aba.
+      const alvo = outra[i].total;
+      if (alvo > m.total + 1) {
+        pontilhado += `<rect x="${(cx - barW / 2 - 6).toFixed(1)}" y="${y(alvo).toFixed(1)}"
+          width="${(barW + 12).toFixed(1)}" height="${(y(0) - y(alvo)).toFixed(1)}"
+          fill="none" stroke="rgba(255,255,255,.30)" stroke-width="1" stroke-dasharray="4 4" rx="3">
+          <title>Se mantiver o ritmo de parcelar: ${money(alvo)}</title></rect>`;
+      }
+
+      const sobra = m.renda - m.total;
+      const corSobra = sobra < 0 ? "#fb7185" : "#4ade80";
+      barras += `<text x="${cx.toFixed(1)}" y="${(y(Math.max(m.total, alvo)) - 10).toFixed(1)}" text-anchor="middle"
+        font-size="12.5" font-weight="800" fill="${sobra < 0 ? "#fb7185" : "#dbe6f5"}">${valorCurto(m.total)}</text>`;
+      rotulos += `<text x="${cx.toFixed(1)}" y="${H - 40}" text-anchor="middle" font-size="11" font-weight="600" fill="#a9bdd8">${mesCurto(m.ym)}</text>
+        <text x="${cx.toFixed(1)}" y="${H - 22}" text-anchor="middle" font-size="11.5" font-weight="700" fill="${corSobra}">${sobra >= 0 ? "+" : "−"}${valorCurto(Math.abs(sobra))}</text>`;
+    });
+
+    // Linha da renda. Segue mês a mês porque receita pode mudar.
+    const ptsRenda = serie.map((m, i) => `${(padL + step * i).toFixed(1)},${y(m.renda).toFixed(1)} ${(padL + step * (i + 1)).toFixed(1)},${y(m.renda).toFixed(1)}`).join(" ");
+    const rendaBase = serie[0].renda;
+    linhaRenda = `<polyline points="${ptsRenda}" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-dasharray="7 5"/>
+      <text x="${W - padR}" y="${(y(rendaBase) - 8).toFixed(1)}" text-anchor="end" font-size="11" font-weight="700" fill="#2dd4bf">renda · ${money(rendaBase)}</text>`;
+
+    const legenda = PROJ_FAIXAS.map((f) =>
+      `<span class="pl-item"><i style="background:${f.cor}"></i>${f.nome}</span>`).join("") +
+      `<span class="pl-item"><i class="tracejado"></i>Se mantiver o ritmo de parcelar</span>` +
+      `<span class="pl-item"><i class="renda"></i>Renda líquida</span>`;
+
+    wrap.innerHTML = `
+      <div class="proj-chart">
+        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Compromisso dos próximos ${n} meses">
+          ${eixo}${pontilhado}${barras}${linhaRenda}${rotulos}
+        </svg>
+      </div>
+      <div class="proj-legenda">${legenda}</div>
+      <div class="hint" style="margin-top:8px">O número sobre a barra é o gasto do mês; abaixo do mês, o que sobra da renda. Parcelas e recorrências são valores reais da fatura — o gasto variável é estimativa, mantida no nível de ${mesLabel(ym0)}.</div>`;
   }
 
   // ---------- Receitas ----------
@@ -1317,7 +1465,10 @@
       { name: "descricao", label: "Descrição da despesa", type: "text", full: true, req: true },
       { name: "valor", label: "Valor padrão (R$)", type: "number", req: true },
       { name: "vencimento", label: "Data / 1º vencimento", type: "date", value: today() },
-      { name: "recorrencia", label: "Recorrência", type: "select", options: [{ v: "nenhuma", t: "Única" }, { v: "mensal", t: "🔁 Mensal (repete todo mês)" }] },
+      // Despesa geral costuma ser fixa (aluguel, luz, escola), e só o que se
+      // repete aparece nos meses à frente da projeção. Mensal entra primeiro
+      // porque é o caso comum — "Única" continua a um clique.
+      { name: "recorrencia", label: "Repete todo mês?", type: "select", options: [{ v: "mensal", t: "🔁 Sim, todo mês" }, { v: "nenhuma", t: "Não, só neste mês" }] },
       { name: "category_id", label: "Categoria", type: "select", options: cats.filter((c) => c.tipo === "despesa").map((c) => ({ v: c.id, t: c.icone + " " + c.nome })) }
     ],
     account: () => [
@@ -1823,6 +1974,12 @@
       }
       const ed = e.target.closest("[data-edit]");
       if (ed) openModal(ed.dataset.edit, ed.dataset.id);
+      const cen = e.target.closest("[data-cenario]");
+      if (cen) {
+        projCenario = cen.dataset.cenario;
+        $$(".cen-btn").forEach((b) => b.classList.toggle("active", b === cen));
+        render();
+      }
       const tog = e.target.closest("[data-card-toggle]");
       if (tog) {
         const id = tog.dataset.cardToggle;

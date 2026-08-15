@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#080d1a">
 <title>FinControl AI</title>
-<link rel="manifest" href="manifest.webmanifest?v=25">
+<link rel="manifest" href="manifest.webmanifest?v=26">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="css/styles.css?v=25">
+<link rel="stylesheet" href="css/styles.css?v=26">
 </head>
 <body>
 <canvas id="bgCanvas" aria-hidden="true"></canvas>
@@ -130,6 +130,17 @@
           <div class="hc-row"><span>− Fatura do cartão</span><b id="mesFatura">R$ 0,00</b></div>
           <div class="hc-row"><span>− Despesas gerais</span><b id="mesGerais">R$ 0,00</b></div>
         </div>
+      </div>
+
+      <!-- Para onde o mês caminha -->
+      <div class="card section" id="projecaoBox">
+        <div class="section-title">📊 Os próximos meses</div>
+        <p class="hint">O que já está comprometido, mês a mês. As parcelas vêm da fatura; as recorrências, do que se repete todo mês; o gasto variável é o resto da fatura, mantido no nível de hoje.</p>
+        <div class="cenarios">
+          <button class="cen-btn active" data-cenario="sem-novas">Sem novos parcelamentos</button>
+          <button class="cen-btn" data-cenario="ritmo">Mantendo o ritmo atual de parcelar</button>
+        </div>
+        <div id="projecaoChart"></div>
       </div>
 
       <!-- Receitas do mês -->
@@ -278,14 +289,14 @@
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <!-- Supabase JS (usado quando config.js estiver preenchido) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="js/config.js?v=25"></script>
-<script src="js/bg.js?v=25"></script>
-<script src="js/supabaseClient.js?v=25"></script>
-<script src="js/auth.js?v=25"></script>
-<script src="js/store.js?v=25"></script>
-<script src="js/bills.js?v=25"></script>
-<script src="js/fatura.js?v=25"></script>
-<script src="js/forecast.js?v=25"></script>
-<script src="js/app.js?v=25"></script>
+<script src="js/config.js?v=26"></script>
+<script src="js/bg.js?v=26"></script>
+<script src="js/supabaseClient.js?v=26"></script>
+<script src="js/auth.js?v=26"></script>
+<script src="js/store.js?v=26"></script>
+<script src="js/bills.js?v=26"></script>
+<script src="js/fatura.js?v=26"></script>
+<script src="js/forecast.js?v=26"></script>
+<script src="js/app.js?v=26"></script>
 </body>
 </html>
