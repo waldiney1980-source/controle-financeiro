@@ -13,7 +13,7 @@
  * competência, store.js guarda no cofre da família.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v33";
+  const APP_VERSION = "v35";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 9;
 
@@ -105,7 +105,7 @@
     // enfeite que não faz nada.
     const html = ms.length < 2 ? "" : ms.map((m) =>
       `<button class="mes${m === ativo ? " on" : ""}" data-mes="${m}">${mesLabel(m)}</button>`).join("");
-    ["#mesesInicio", "#mesesFixos"].forEach((sel) => {
+    ["#mesesInicio", "#mesesFixos", "#mesesFora"].forEach((sel) => {
       const el = $(sel);
       if (el) el.innerHTML = html;
     });
@@ -308,13 +308,14 @@
   // ---------- Telas ----------
   function render() {
     const t = tela;
-    ["inicio", "faturas", "fixos", "futuro"].forEach((k) =>
+    ["inicio", "faturas", "fixos", "fora", "futuro"].forEach((k) =>
       $("#tela-" + k).classList.toggle("hidden", k !== t));
     $$("#abas button").forEach((b) => b.classList.toggle("on", b.dataset.tela === t));
     const titulos = {
       inicio: ["Meu mês", "Como está o mês da fatura"],
       faturas: ["Faturas", "Mande o PDF e o resto é automático"],
-      fixos: ["Fixos", "O que se repete todo mês"],
+      fixos: ["Fixos", "O que se repete todo mês no cartão"],
+      fora: ["Fora do cartão", "Boleto, PIX, débito e dinheiro"],
       futuro: ["Futuro", "Para onde os próximos meses caminham"]
     };
     $("#topoTit").textContent = titulos[t][0];
@@ -324,6 +325,7 @@
     if (t === "inicio") renderInicio();
     if (t === "faturas") renderFaturas();
     if (t === "fixos") renderFixos();
+    if (t === "fora") renderFora();
     if (t === "futuro") renderFuturo();
   }
 
@@ -446,18 +448,34 @@
         <label class="chave"><input type="checkbox" data-rec="${esc(r.chave)}" ${r.marcada ? "checked" : ""}><i></i></label>
       </div>`).join("") : `<div class="vazio"><span class="em">🔁</span>Nenhuma cobrança recorrente encontrada. Importe uma fatura.</div>`;
 
+  }
+
+  // ---------- Fora do cartão ----------
+  // Tela própria porque é a única coisa que você digita: tudo o mais chega
+  // pela fatura. O total aparece junto do total do mês, para ficar claro
+  // que ele NÃO é uma lista à parte — ele soma no gasto do mês.
+  function renderFora() {
     const ym = mesAtivo();
     const fora = foraDoMes(ym);
+    const total = fora.reduce((s, l) => s + l.valor, 0);
+    const mes = fatias(ym, null);
+
     $("#listaFora").innerHTML = fora.length ? fora.map((l) => `
       <div class="linha">
         <span class="esq"><span class="ico">${l.recorrencia === "mensal" ? "🔁" : "•"}</span>
           <span><span class="nome">${esc(l.descricao)}</span>
-          <div class="desc">${l.recorrencia === "mensal" ? "todo mês" : "só em " + mesLabel(ym)}${l.data ? " · dia " + dataCurta(l.data).split("/")[0] : ""}</div></span></span>
+          <div class="desc">${l.recorrencia === "mensal" ? "todo mês" : "só em " + mesLabel(ym)}${l.data ? " · dia " + String(l.data).slice(8, 10) : ""}</div></span></span>
         <span style="display:flex;align-items:center;gap:10px">
           <b>${money(l.valor)}</b>
           ${l.repetido ? "" : `<button class="btn perigo mini" data-del-fora="${l.col}:${l.id}">✕</button>`}
         </span>
-      </div>`).join("") : `<div class="vazio" style="padding:22px">Nada lançado fora do cartão em ${mesLabel(ym)}.</div>`;
+      </div>`).join("") : `<div class="vazio"><span class="em">🧾</span>Nada lançado fora do cartão em ${mesLabel(ym)}.</div>`;
+
+    $("#foraTotal").innerHTML = total > 0 ? `
+      <div class="aviso" style="margin:14px 0 0">
+        <b>${money(total)}</b> fora do cartão em ${mesLabel(ym)}.
+        <br>Já está somado no gasto do mês, que é de <b>${money(mes.total)}</b>.
+      </div>` : "";
   }
 
   function renderFuturo() {
@@ -474,10 +492,10 @@
     }
 
     const FAIXAS = [
-      { k: "fixos", cor: "#64748b", nome: "Fora do cartão" },
-      { k: "parcelas", cor: "#7c5cff", nome: "Parcelas" },
-      { k: "recorrentes", cor: "#f5b23d", nome: "Recorrentes" },
-      { k: "variavel", cor: "#ff5f7a", nome: "Gasto livre" }
+      { k: "fixos", cor: "#8b8ba3", nome: "Fora do cartão" },
+      { k: "parcelas", cor: "#4f46e5", nome: "Parcelas" },
+      { k: "recorrentes", cor: "#b07d18", nome: "Recorrentes" },
+      { k: "variavel", cor: "#d92d54", nome: "Gasto livre" }
     ];
     const W = 700, H = 320, padL = 40, padR = 12, padT = 30, padB = 52;
     const plotH = H - padT - padB;
@@ -490,8 +508,8 @@
     let eixo = "";
     for (let k = 0; k <= 3; k++) {
       const v = (maxV / 3) * k, yy = y(v);
-      eixo += `<line x1="${padL}" x2="${W - padR}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}" stroke="rgba(255,255,255,.055)"/>
-        <text x="${padL - 6}" y="${(yy + 3.5).toFixed(1)}" text-anchor="end" font-size="9.5" fill="#61728c">${curto(v)}</text>`;
+      eixo += `<line x1="${padL}" x2="${W - padR}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}" stroke="currentColor" stroke-opacity=".09"/>
+        <text x="${padL - 6}" y="${(yy + 3.5).toFixed(1)}" text-anchor="end" font-size="9.5" fill="currentColor" opacity=".55">${curto(v)}</text>`;
     }
 
     let corpo = "", base = "";
@@ -508,20 +526,20 @@
       const alvo = outra[i].total;
       if (alvo > m.total + 1) {
         corpo += `<rect x="${(x0 - 4).toFixed(1)}" y="${y(alvo).toFixed(1)}" width="${(barW + 8).toFixed(1)}"
-          height="${(y(0) - y(alvo)).toFixed(1)}" fill="none" stroke="rgba(255,255,255,.28)"
+          height="${(y(0) - y(alvo)).toFixed(1)}" fill="none" stroke="currentColor" stroke-opacity=".35"
           stroke-dasharray="3 3" rx="3"><title>Outro cenário: ${money(alvo)}</title></rect>`;
       }
-      corpo += `<text x="${cx.toFixed(1)}" y="${(y(Math.max(m.total, alvo)) - 7).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="800" fill="#e9eff8">${curto(m.total)}</text>`;
+      corpo += `<text x="${cx.toFixed(1)}" y="${(y(Math.max(m.total, alvo)) - 7).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="800" fill="currentColor">${curto(m.total)}</text>`;
       const sobra = r - m.total;
-      base += `<text x="${cx.toFixed(1)}" y="${H - 30}" text-anchor="middle" font-size="9.5" font-weight="600" fill="#8fa1bb">${mesLabel(m.ym).split(".")[0]}</text>`;
-      if (r > 0) base += `<text x="${cx.toFixed(1)}" y="${H - 14}" text-anchor="middle" font-size="10" font-weight="800" fill="${sobra < 0 ? "#ff5f7a" : "#19c98a"}">${sobra < 0 ? "−" : "+"}${curto(sobra)}</text>`;
+      base += `<text x="${cx.toFixed(1)}" y="${H - 30}" text-anchor="middle" font-size="9.5" font-weight="600" fill="currentColor" opacity=".6">${mesLabel(m.ym).split(".")[0]}</text>`;
+      if (r > 0) base += `<text x="${cx.toFixed(1)}" y="${H - 14}" text-anchor="middle" font-size="10" font-weight="800" fill="${sobra < 0 ? "#d92d54" : "#0f9d58"}">${sobra < 0 ? "−" : "+"}${curto(sobra)}</text>`;
     });
 
     let linhaRenda = "";
     if (r > 0) {
       linhaRenda = `<line x1="${padL}" x2="${W - padR}" y1="${y(r).toFixed(1)}" y2="${y(r).toFixed(1)}"
-        stroke="#19c98a" stroke-width="2" stroke-dasharray="6 4"/>
-        <text x="${W - padR}" y="${(y(r) - 6).toFixed(1)}" text-anchor="end" font-size="9.5" font-weight="700" fill="#19c98a">renda ${curto(r)}</text>`;
+        stroke="#0f9d58" stroke-width="2" stroke-dasharray="6 4"/>
+        <text x="${W - padR}" y="${(y(r) - 6).toFixed(1)}" text-anchor="end" font-size="9.5" font-weight="700" fill="#0f9d58">renda ${curto(r)}</text>`;
     }
 
     wrap.innerHTML = `
@@ -666,7 +684,25 @@
   }
   function fecharModal() { $("#modal").classList.remove("on"); modalTipo = null; }
 
+  // Trava contra gravação em dobro. No celular o toque duplo acontece, e
+  // sem isto a mesma despesa entrava duas vezes — o total do mês subia o
+  // dobro e só se percebia depois, conferindo item a item.
+  let salvando = false;
+
   async function salvarModal() {
+    if (salvando || !modalTipo) return;
+    salvando = true;
+    const botao = $('.modal [data-acao="salvar"]');
+    if (botao) { botao.disabled = true; botao.textContent = "Salvando…"; }
+    try {
+      await gravarModal();
+    } finally {
+      salvando = false;
+      if (botao) { botao.disabled = false; botao.textContent = "Salvar"; }
+    }
+  }
+
+  async function gravarModal() {
     const d = {};
     $$("#modalForm input,#modalForm select").forEach((i) => { d[i.name] = i.value; });
     if (modalTipo === "cartao") {
