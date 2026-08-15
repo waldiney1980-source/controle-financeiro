@@ -1,5 +1,5 @@
 /* Service Worker — FinControl AI (rede primeiro, cache como reserva offline) */
-const CACHE = "fincontrol-v22";
+const CACHE = "fincontrol-v23";
 const ASSETS = [
   "./index.html",
   "./css/styles.css",
@@ -32,8 +32,17 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   // Só cuida dos arquivos do próprio app (ignora Supabase/CDN externo).
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
+
+  // "Rede primeiro" não bastava: o GitHub Pages manda o HTML com
+  // max-age=600, então o `fetch` era atendido pelo cache HTTP do navegador
+  // e a versão nova só aparecia dez minutos depois. Pedindo no-cache, o
+  // navegador é obrigado a revalidar com o servidor a cada carga.
+  const req = e.request.mode === "navigate"
+    ? new Request(url.href, { cache: "reload", credentials: "same-origin" })
+    : new Request(e.request, { cache: "no-cache" });
+
   e.respondWith(
-    fetch(e.request).then((res) => {
+    fetch(req).then((res) => {
       const copy = res.clone();
       caches.open(CACHE).then((c) => c.put(e.request, copy));
       return res;

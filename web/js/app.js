@@ -3,6 +3,10 @@
  * Navegação, renderização dos dashboards, formulários e importação.
  * =========================================================== */
 (function () {
+  // Versão do app, mostrada no rodapé da barra lateral. Anda junto com o
+  // CACHE do sw.js — as duas sobem no mesmo commit.
+  const APP_VERSION = "v23";
+
   const { Store, Forecast } = FC;
   const cfg = window.FC_CONFIG || {};
   const $ = (s, r = document) => r.querySelector(s);
@@ -1993,13 +1997,47 @@
     const badge = $("#modeBadge");
     badge.textContent = window.FC_MODE === "online" ? "online" : "offline";
     badge.classList.toggle("online", window.FC_MODE === "online");
+
+    // Qual versão está na tela. Clicar força a busca da mais nova — saída
+    // manual para quando o navegador insistir em servir a cópia velha.
+    const ver = $("#verBadge");
+    if (ver) {
+      ver.textContent = APP_VERSION;
+      ver.style.cursor = "pointer";
+      ver.addEventListener("click", async () => {
+        ver.textContent = "…";
+        try {
+          if ("serviceWorker" in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map((r) => r.unregister()));
+          }
+          if (window.caches) {
+            const chaves = await caches.keys();
+            await Promise.all(chaves.map((k) => caches.delete(k)));
+          }
+        } catch (e) {}
+        sessionStorage.removeItem("fc_recarregou");
+        location.reload();
+      });
+    }
     bind();
     // Sincronização em tempo real: re-renderiza quando a família altera algo.
     window.addEventListener("fc:remote", () => render());
     goto("dashboard");
-    // Registra service worker (só em http/https)
+    // Registra service worker (só em http/https) e RECARREGA quando uma
+    // versão nova assume. Sem isso a tela antiga continuava na frente do
+    // usuário mesmo com a versão nova já publicada e baixada.
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js").catch(() => {});
+      navigator.serviceWorker.register("sw.js").then((reg) => {
+        reg.update();
+        setInterval(() => reg.update(), 60 * 60 * 1000);   // confere de hora em hora
+      }).catch(() => {});
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        // Uma recarga só: sem a trava, o ciclo se repetiria sem parar.
+        if (sessionStorage.getItem("fc_recarregou") === "1") return;
+        sessionStorage.setItem("fc_recarregou", "1");
+        location.reload();
+      });
     }
   }
 
