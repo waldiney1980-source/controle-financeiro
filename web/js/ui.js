@@ -13,7 +13,7 @@
  * competência, store.js guarda no cofre da família.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v32";
+  const APP_VERSION = "v33";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 9;
 
@@ -81,7 +81,109 @@
     return f.length ? f[0].ym : hoje().slice(0, 7);
   }
 
+  // Mês escolhido no filtro. "" = segue a fatura mais recente sozinho, que
+  // é o certo logo depois de importar.
+  let mesSel = "";
+  function mesAtivo() {
+    const ms = mesesDisponiveis();
+    if (mesSel && ms.indexOf(mesSel) >= 0) return mesSel;
+    return mesFoco();
+  }
+
+  // Um mês por fatura guardada, mais o mês corrente. Não invento meses que
+  // não têm fatura: aí a tela mostraria zero e pareceria defeito.
+  function mesesDisponiveis() {
+    const set = new Set(faturas().map((f) => f.ym));
+    set.add(hoje().slice(0, 7));
+    return Array.from(set).sort().reverse();
+  }
+
+  function renderMeses() {
+    const ms = mesesDisponiveis();
+    const ativo = mesAtivo();
+    // Com um mês só não há o que filtrar — a barra some em vez de virar
+    // enfeite que não faz nada.
+    const html = ms.length < 2 ? "" : ms.map((m) =>
+      `<button class="mes${m === ativo ? " on" : ""}" data-mes="${m}">${mesLabel(m)}</button>`).join("");
+    ["#mesesInicio", "#mesesFixos"].forEach((sel) => {
+      const el = $(sel);
+      if (el) el.innerHTML = html;
+    });
+  }
+
   const chaveTxt = (s) => FC.Fatura.chaveSerie(s);
+
+  // ---------- Nome legível ----------
+  // A fatura escreve o estabelecimento cru, com cidade, país e código da
+  // maquininha grudados: "ICATUSEGUROS*Icat RIO DE JANEIR BR". Aqui isso
+  // vira "Icatu Seguros". É só para MOSTRAR — o texto original continua
+  // gravado, porque é ele que casa uma fatura com a outra.
+  const CIDADES = new RegExp("(" + [
+    "rio de janeir[oa]?", "sao paulo", "s ?paulo", "belo horizonte", "curitiba",
+    "curiti", "porto alegre", "brasilia", "salvador", "recife", "fortaleza",
+    "barueri", "osasco", "nilopolis", "niteroi", "campinas", "guarulhos",
+    "santo andre", "sao bernardo", "duque de caxias", "nova iguacu", "betim",
+    "contagem", "londrina", "maringa", "joinville", "blumenau", "florianopolis",
+    "vitoria", "goiania", "manaus", "belem", "natal", "joao pessoa", "maceio",
+    "aracaju", "teresina", "cuiaba", "campo grande", "palmas", "santos"
+  ].join("|") + ")\\b", "gi");
+  const UF_FIM = /\s+(ac|al|ap|am|ba|ce|df|es|go|ma|mt|ms|mg|pa|pb|pr|pe|pi|rj|rn|rs|ro|rr|sc|sp|se|to|br|us|ca|gb|ie)\s*$/i;
+
+  const semAcento = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const letras = (s) => (String(s).match(/[a-zA-Z]/g) || []).length;
+
+  function nomeBonito(desc) {
+    const original = String(desc || "").trim();
+    if (!original) return "—";
+    let s = semAcento(original);
+
+    // 1. Lugar sai primeiro. A cidade vem colada no nome com frequência
+    //    ("FerreirSao Paulo"), então o corte não exige espaço antes.
+    for (let i = 0; i < 3; i++) s = s.replace(UF_FIM, "");
+    s = s.replace(CIDADES, " ");
+    s = s.replace(/\s+(rio|sp|rj)\s*$/i, " ");       // "… ATLANTICA RIO"
+
+    // 2. Só então o "*": antes dele, a cidade inflava o lado errado e
+    //    "ICATUSEGUROS*Icat RIO DE JANEIR" virava "Icat".
+    if (s.indexOf("*") > -1) {
+      const partes = s.split("*").map((p) => p.trim()).filter(Boolean);
+      if (partes.length > 1) {
+        const primeira = partes[0];
+        // Marca costuma ser a primeira, quando é uma palavra só e inteira.
+        s = (primeira.split(/\s+/).length === 1 && letras(primeira) >= 4)
+          ? primeira
+          : partes.reduce((a, b) => (letras(b) > letras(a) ? b : a));
+      }
+    }
+
+    // 3. Código de loja e forma jurídica. "com" fica de fora da lista de
+    //    propósito: cortá-lo quebraria "netflix.com" e "anthropic.com".
+    s = s.replace(/\b[a-z]?\d{3,}\b/gi, " ")
+      .replace(/\b(ltda|s\/?a|eireli|epp)\b\.?/gi, " ")
+      .replace(/\s*-\s*/g, " ")
+      .replace(/\s+\d{1,3}\s*$/, "")
+      .replace(/[\s.\-_/]+$/g, "")
+      .replace(/\s+/g, " ").trim();
+
+    // 4. "Smiles Clube Smiles" → "Smiles Clube"
+    const vistas = new Set();
+    s = s.split(" ").filter((p) => {
+      const k = p.toLowerCase();
+      if (k.length < 3) return true;
+      if (vistas.has(k)) return false;
+      vistas.add(k);
+      return true;
+    }).join(" ");
+
+    if (letras(s) < 3) return original;              // cortou demais: desiste
+
+    // 5. GRITANDO EM MAIÚSCULA vira Capitalizado.
+    const maiusculas = (s.match(/[A-Z]/g) || []).length;
+    if (maiusculas >= letras(s) * 0.7) {
+      s = s.toLowerCase().replace(/(^|\s)([a-z])/g, (m, a, b) => a + b.toUpperCase());
+    }
+    return s;
+  }
 
   // Repete no mês `ym` o que é mensal e começou antes. Uma repetição por
   // série: sem isso, a mesma assinatura vinda de duas faturas entraria duas
@@ -182,7 +284,7 @@
   }
 
   function serieFutura(cen) {
-    const ym0 = mesFoco();
+    const ym0 = mesAtivo();
     const base = fatias(ym0, null);
     const out = [base];
     for (let i = 1; i < MESES_FUTURO; i++) {
@@ -197,7 +299,7 @@
 
   function saudeDoMes() {
     const r = renda();
-    const f = fatias(mesFoco(), null);
+    const f = fatias(mesAtivo(), null);
     const pct = r > 0 ? (f.total / r) * 100 : 0;
     const nivel = r <= 0 ? "sem" : pct >= 95 ? "ruim" : pct >= 75 ? "atencao" : "bom";
     return { renda: r, ...f, pct, nivel, sobra: r - f.total };
@@ -218,6 +320,7 @@
     $("#topoTit").textContent = titulos[t][0];
     $("#topoSub").textContent = titulos[t][1];
 
+    renderMeses();
     if (t === "inicio") renderInicio();
     if (t === "faturas") renderFaturas();
     if (t === "fixos") renderFixos();
@@ -335,7 +438,7 @@
       <div class="linha" style="align-items:flex-start">
         <span class="esq" style="flex:1">
           <span style="flex:1;min-width:0">
-            <span class="nome">${esc(r.descricao)}</span>
+            <span class="nome">${esc(nomeBonito(r.descricao))}</span>
             <div class="desc">${money(r.valor)} por mês${r.vezes >= 2 ? ` · visto em ${r.vezes} faturas` : ""}${r.marcada ? "" : " · sugestão"}</div>
             <div class="item-barra"><i style="width:${((r.valor / maior) * 100).toFixed(1)}%"></i></div>
           </span>
@@ -343,7 +446,7 @@
         <label class="chave"><input type="checkbox" data-rec="${esc(r.chave)}" ${r.marcada ? "checked" : ""}><i></i></label>
       </div>`).join("") : `<div class="vazio"><span class="em">🔁</span>Nenhuma cobrança recorrente encontrada. Importe uma fatura.</div>`;
 
-    const ym = mesFoco();
+    const ym = mesAtivo();
     const fora = foraDoMes(ym);
     $("#listaFora").innerHTML = fora.length ? fora.map((l) => `
       <div class="linha">
@@ -427,7 +530,7 @@
       </svg></div>
       <div class="legenda">${FAIXAS.map((f) => `<span><i style="background:${f.cor}"></i>${f.nome}</span>`).join("")}
         <span><i style="background:none;border:1px dashed rgba(255,255,255,.45)"></i>Outro cenário</span></div>
-      <p class="dica">Parcelas e recorrentes são valores reais da fatura. O gasto livre é estimativa: repete o nível de ${mesLabel(mesFoco())}.</p>`;
+      <p class="dica">Parcelas e recorrentes são valores reais da fatura. O gasto livre é estimativa: repete o nível de ${mesLabel(mesAtivo())}.</p>`;
 
     // Quando cada parcela acaba
     const porSerie = {};
@@ -445,7 +548,7 @@
     $("#listaParcelas").innerHTML = lista.length ? lista.map((p) => `
       <div class="linha">
         <span class="esq"><span class="ico">📆</span>
-          <span><span class="nome">${esc(p.nome)}</span>
+          <span><span class="nome">${esc(nomeBonito(p.nome))}</span>
           <div class="desc">${money(p.valor)} × ${p.total} · termina em ${mesLabel(p.ultima)}</div></span></span>
         <b>${p.falta ? p.falta + " a pagar" : "última"}</b>
       </div>`).join("") : `<div class="vazio" style="padding:22px">Nenhuma compra parcelada.</div>`;
@@ -605,6 +708,9 @@
         if (a === "salvar") salvarModal();
         return;
       }
+      const mb = e.target.closest("[data-mes]");
+      if (mb) { mesSel = mb.dataset.mes; render(); return; }
+
       const cen = e.target.closest("[data-cenario]");
       if (cen) { cenario = cen.dataset.cenario; render(); return; }
 
