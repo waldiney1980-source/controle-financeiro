@@ -19,10 +19,8 @@
     <div class="brand">FinControl <span>AI</span></div>
     <nav class="nav" id="nav">
       <button data-page="dashboard" class="active"><span class="ni">🏠</span><span class="nl">Dashboard</span></button>
-      <button data-page="transactions"><span class="ni">🧾</span><span class="nl">Despesas</span></button>
-      <button data-page="income"><span class="ni">💰</span><span class="nl">Receitas</span></button>
       <button data-page="cards"><span class="ni">💳</span><span class="nl">Cartões</span></button>
-      <button data-page="bills"><span class="ni">📌</span><span class="nl">Contas</span><span class="nav-badge" id="billsBadge"></span></button>
+      <button data-page="bills"><span class="ni">🧾</span><span class="nl">Despesas gerais</span><span class="nav-badge" id="billsBadge"></span></button>
       <button data-page="goals"><span class="ni">🎯</span><span class="nl">Metas</span></button>
       <button data-page="forecast"><span class="ni">🔮</span><span class="nl">Projeções</span></button>
       <button data-page="import"><span class="ni">📥</span><span class="nl">Importar</span></button>
@@ -110,33 +108,41 @@
       </details>
     </section>
 
-    <!-- DESPESAS -->
-    <section id="page-transactions" class="page hidden">
-      <header class="top">
-        <div><h1>Despesas</h1><p>Tudo o que saiu.</p></div>
-        <button class="btn" data-action="new-expense">+ Nova despesa</button>
-      </header>
-      <div class="card"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Quem</th><th>Forma</th><th class="right">Valor</th><th></th></tr></thead><tbody id="expenseTable"></tbody></table><div class="empty hidden" id="expenseEmpty">Nenhuma despesa ainda.</div></div>
-    </section>
-
-    <!-- RECEITAS -->
-    <section id="page-income" class="page hidden">
-      <header class="top">
-        <div><h1>Receitas</h1><p>Suas entradas.</p></div>
-        <button class="btn" data-action="new-income">+ Nova receita</button>
-      </header>
-      <div class="card"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Quem</th><th>Recorrência</th><th class="right">Valor</th><th></th></tr></thead><tbody id="incomeTable"></tbody></table><div class="empty hidden" id="incomeEmpty">Nenhuma receita ainda.</div></div>
-    </section>
-
-    <!-- CARTÕES -->
+    <!-- CARTÕES — o mês inteiro num lugar só -->
     <section id="page-cards" class="page hidden">
       <header class="top">
-        <div><h1>Cartões</h1><p>Limites, faturas e compromissos futuros.</p></div>
+        <div><h1>Meu mês</h1><p>A fatura do cartão, as receitas e o que sobra — tudo aqui.</p></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn secondary" data-action="new-income">+ Receita</button>
           <button class="btn secondary" data-action="new-installment">+ Compra parcelada</button>
           <button class="btn" data-action="new-card">+ Novo cartão</button>
         </div>
       </header>
+
+      <!-- Resumo do mês: entra − sai = sobra -->
+      <div class="filters section">
+        <div class="filt"><label>📅 Mês</label><select id="mesCartao"></select></div>
+      </div>
+      <div class="hero" id="mesResumo">
+        <div class="hero-top"><span class="hero-label" id="mesLabelTop">Sobra do mês</span></div>
+        <div class="hero-value" id="mesSaldo">R$ 0,00</div>
+        <div class="hero-sub" id="mesSub"></div>
+        <div class="hero-calc">
+          <div class="hc-row"><span>Receitas</span><b class="positive" id="mesReceitas">R$ 0,00</b></div>
+          <div class="hc-row"><span>− Fatura do cartão</span><b id="mesFatura">R$ 0,00</b></div>
+          <div class="hc-row"><span>− Despesas gerais</span><b id="mesGerais">R$ 0,00</b></div>
+        </div>
+      </div>
+
+      <!-- Receitas do mês -->
+      <div class="card section">
+        <div class="section-title">💰 Receitas do mês</div>
+        <table class="table">
+          <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Quem</th><th>Recorrência</th><th class="right">Valor</th><th></th></tr></thead>
+          <tbody id="incomeTable"></tbody>
+        </table>
+        <div class="empty hidden" id="incomeEmpty">Nenhuma receita neste mês. Clique em “+ Receita”.</div>
+      </div>
       <!-- Importar a fatura em PDF -->
       <div class="card section" id="faturaBox">
         <div class="section-title">📄 Importar fatura (PDF)</div>
@@ -154,11 +160,13 @@
       <div class="empty hidden" id="cardsEmpty">Nenhum cartão cadastrado.</div>
     </section>
 
-    <!-- CONTAS A PAGAR -->
+    <!-- DESPESAS GERAIS — tudo que não está na fatura do cartão -->
     <section id="page-bills" class="page hidden">
       <header class="top">
-        <div><h1>Contas a pagar</h1><p>Um mês por vez. Conta mensal se repete sozinha — e cada mês tem seu próprio valor e seu próprio “paguei”.</p></div>
-        <button class="btn" data-action="new-bill">+ Nova conta</button>
+        <div><h1>Despesas gerais</h1><p>O que não passa no cartão: boleto, PIX, débito e dinheiro. O que se repete todo mês volta sozinho, e cada mês tem seu próprio valor e seu próprio “paguei”. Tudo isto soma no total do mês.</p></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn" data-action="new-bill">+ Nova despesa</button>
+        </div>
       </header>
       <div id="billsAlert"></div>
       <div class="filters section">

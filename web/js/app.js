@@ -481,11 +481,11 @@
     const catById = (id) => Store.categoryById(id);
 
     renderDashboard(tx, accounts, cards, budgets, goals, catById, bills);
-    renderExpenses(tx, catById);
+    renderMesCartao(tx, bills);
     renderIncome(tx, catById);
     renderCards(cards, tx);
     renderFaturaBox(cards);
-    renderBills(bills);
+    renderBills(bills, tx);
     renderGoals(goals);
     renderForecast(tx, accounts, goals, bills);
   }
@@ -663,43 +663,110 @@
       <div class="row"><span>Em 365 dias</span><b>${money(p.d365)}</b></div>`;
   }
 
-  // ---------- Despesas ----------
-  function renderExpenses(tx, catById) {
-    const list = tx.filter((t) => t.tipo === "despesa").sort((a, b) => b.data.localeCompare(a.data));
-    const body = $("#expenseTable");
-    $("#expenseEmpty").classList.toggle("hidden", list.length > 0);
-    body.innerHTML = list.map((t) => {
-      const c = catById(t.category_id);
-      return `<tr>
-        <td>${fmtDate(t.data)}</td><td>${esc(t.descricao)}</td>
-        <td>${c ? c.icone + " " + esc(c.nome) : "—"}${t.detalhe ? ` <span class="muted">— ${esc(t.detalhe)}</span>` : ""}</td>
-        <td>${esc(t.pessoa) || "—"}</td>
-        <td>${t.forma === "cartao" ? "💳 Cartão" : "🏦 Conta"}</td>
-        <td class="right negative">${money(t.valor)}</td>
-        <td class="right nowrap">
-          <button class="link" data-edit="expense" data-id="${t.id}">editar</button>
-          <button class="link-danger" data-del="transactions" data-del-label="lançamento" data-id="${t.id}">excluir</button>
-        </td>
-      </tr>`;
-    }).join("");
+  // ---------- O mês inteiro num lugar só ----------
+  // Mês em foco na tela "Meu mês". "" = o app escolhe (o corrente).
+  let mesPainel = "";
+
+  function mesEmFoco() { return mesPainel || today().slice(0, 7); }
+
+  // Despesa geral do mês = conta a pagar + lançamento manual fora do cartão.
+  // As duas coisas moram em coleções diferentes por história do app, mas para
+  // quem usa são a mesma coisa: gasto que não veio na fatura.
+  function despesasGeraisDoMes(bills, tx, ym) {
+    const linhas = [];
+    FC.Bills.ocorrenciasDoMes(bills, ym).forEach((o) => {
+      linhas.push({
+        tipo: "conta", id: o.id, ym: o.ym, descricao: o.descricao,
+        category_id: o.category_id, data: o.venc, valor: o.valor,
+        paga: o.paga, pagaEm: o.pagaEm, recorrencia: o.recorrencia
+      });
+    });
+    ocorrenciasTx(tx || [], ym, ym).forEach((t) => {
+      if (t.tipo !== "despesa" || t.card_id || t.forma === "cartao") return;
+      linhas.push({
+        tipo: "manual", id: t.id, ym, descricao: t.descricao,
+        category_id: t.category_id, data: t.data, valor: +t.valor || 0,
+        paga: null, recorrencia: t.recorrencia, repetido: t.repetido
+      });
+    });
+    return linhas.sort((a, b) => String(a.data || "").localeCompare(String(b.data || "")));
+  }
+
+  function totalFaturaDoMes(tx, ym) {
+    return (tx || []).filter((t) =>
+      t.tipo === "despesa" && (t.card_id || t.forma === "cartao") &&
+      String(t.data || "").slice(0, 7) === ym
+    ).reduce((s, t) => s + (+t.valor || 0), 0);
+  }
+
+  function opcoesMesPainel(tx, bills) {
+    const Bl = FC.Bills;
+    const atual = today().slice(0, 7);
+    let de = atual, ate = atual;
+    const marca = (ym) => { if (!ym) return; if (ym < de) de = ym; if (ym > ate) ate = ym; };
+    (tx || []).forEach((t) => marca(String(t.data || "").slice(0, 7)));
+    (bills || []).forEach((b) => marca(Bl.ymDe(b.vencimento)));
+    const out = [];
+    for (let ym = de; Bl.ymDiff(ym, ate) >= 0; ym = Bl.ymAdd(ym, 1)) out.push(ym);
+    return out.reverse();
+  }
+
+  function renderMesCartao(tx, bills) {
+    const ym = mesEmFoco();
+    const sel = $("#mesCartao");
+    if (sel) {
+      const meses = opcoesMesPainel(tx, bills);
+      if (meses.indexOf(ym) < 0) meses.unshift(ym);
+      sel.innerHTML = meses.map((m) => `<option value="${m}">${mesLabel(m)}</option>`).join("");
+      sel.value = ym;
+    }
+
+    const receitas = ocorrenciasTx(tx || [], ym, ym)
+      .filter((t) => t.tipo === "receita").reduce((s, t) => s + (+t.valor || 0), 0);
+    const fatura = totalFaturaDoMes(tx, ym);
+    const gerais = despesasGeraisDoMes(bills, tx, ym).reduce((s, l) => s + l.valor, 0);
+    const sobra = receitas - fatura - gerais;
+
+    setMoney("mesReceitas", receitas);
+    setMoney("mesFatura", fatura);
+    setMoney("mesGerais", gerais);
+    setMoney("mesSaldo", sobra);
+    applyHide();
+
+    const rot = $("#mesLabelTop");
+    if (rot) rot.textContent = sobra < 0 ? "Saiu mais do que entrou" : "Sobra do mês";
+    const sub = $("#mesSub");
+    if (sub) {
+      const comp = receitas > 0 ? ((fatura + gerais) / receitas) * 100 : 0;
+      sub.textContent = `${mesLabel(ym)} · ${receitas > 0 ? pct(comp) + " da renda comprometida" : "sem receita lançada"}`;
+    }
+    const hero = $("#mesResumo");
+    if (hero) hero.classList.toggle("negativo", sobra < 0);
   }
 
   // ---------- Receitas ----------
   function renderIncome(tx, catById) {
-    const list = tx.filter((t) => t.tipo === "receita").sort((a, b) => b.data.localeCompare(a.data));
+    const ym = mesEmFoco();
+    const list = ocorrenciasTx(tx || [], ym, ym)
+      .filter((t) => t.tipo === "receita")
+      .sort((a, b) => b.data.localeCompare(a.data));
     const body = $("#incomeTable");
     $("#incomeEmpty").classList.toggle("hidden", list.length > 0);
     body.innerHTML = list.map((t) => {
       const c = catById(t.category_id);
-      return `<tr>
-        <td>${fmtDate(t.data)}</td><td>${esc(t.descricao)}</td>
+      // Linha "repetida" é a projeção de uma receita mensal neste mês: ela
+      // não existe como registro próprio, então editar/excluir mexeria na
+      // série inteira. Some com o excluir e avisa de onde ela veio.
+      return `<tr class="${t.repetido ? "muted-row" : ""}">
+        <td>${fmtDate(t.data)}</td>
+        <td>${esc(t.descricao)}${t.repetido ? ' <span class="badge warn">🔁 repete</span>' : ""}</td>
         <td>${c ? c.icone + " " + esc(c.nome) : "—"}${t.detalhe ? ` <span class="muted">— ${esc(t.detalhe)}</span>` : ""}</td>
         <td>${esc(t.pessoa) || "—"}</td>
         <td>${t.recorrencia === "mensal" ? "🔁 Mensal" : "Única"}</td>
         <td class="right positive">${money(t.valor)}</td>
         <td class="right nowrap">
           <button class="link" data-edit="income" data-id="${t.id}">editar</button>
-          <button class="link-danger" data-del="transactions" data-del-label="lançamento" data-id="${t.id}">excluir</button>
+          ${t.repetido ? "" : `<button class="link-danger" data-del="transactions" data-del-label="receita" data-id="${t.id}">excluir</button>`}
         </td>
       </tr>`;
     }).join("");
@@ -713,7 +780,9 @@
     const grid = $("#cardsGrid");
     $("#cardsEmpty").classList.toggle("hidden", cards.length > 0);
     const todayStr = new Date().toISOString().slice(0, 10);
-    const curKey = todayStr.slice(0, 7);
+    // A fatura mostrada é a do mês em foco no seletor, não sempre a do mês
+    // corrente: quem importa a fatura de agosto em setembro precisa ver agosto.
+    const curKey = mesEmFoco();
     const mk = (d) => d.slice(0, 7);
     grid.innerHTML = cards.map((c) => {
       const cardTx = tx.filter((t) => t.card_id === c.id && t.tipo === "despesa");
@@ -747,7 +816,7 @@
       return `<div class="card">
         <div class="section-title">💳 ${c.nome}</div>
         <div class="muted">${c.bandeira || ""} ${c.numero_mascarado ? "• " + c.numero_mascarado : ""}</div>
-        <div class="row" style="margin-top:10px"><span>Fatura do mês</span><b>${money(faturaAtual)}</b></div>
+        <div class="row" style="margin-top:10px"><span>Fatura de ${mesLabel(curKey)}</span><b>${money(faturaAtual)}</b></div>
         <div class="row"><span>Limite</span><b>${money(c.limite)}</b></div>
         <div class="bar"><div class="fill ${lvl}" style="width:${Math.min(100, usoPct)}%"></div></div>
         <div class="hint" style="margin-top:8px">Fecha dia ${c.dia_fechamento || "—"} • vence dia ${c.dia_vencimento || "—"}</div>
@@ -883,7 +952,8 @@
     const futuros = lancamentos.filter((l) => l.projecao);
     const estornos = daFatura.filter((l) => l.estorno);
     const pagamentos = res.itens.filter((i) => i.pagamento);
-    const substituir = FC.Fatura.substituiveis(Store.allSync("transactions"), card.id, competencia);
+    const substituir = FC.Fatura.substituiveis(Store.allSync("transactions"), card.id);
+    const emRisco = FC.Fatura.manuaisEmRisco(Store.allSync("transactions"), card.id);
     const somaFatura = daFatura.reduce((s, l) => s + l.valor, 0);
 
     const cats = Store.allSync("categories").filter((c) => c.tipo === "despesa");
@@ -906,6 +976,20 @@
     // bate, alguma coisa escapou: aí a prévia abre para conferência.
     const confere = res.totalDeclarado != null && Math.abs(res.totalDeclarado - somaFatura) < 0.05;
     if (auto && confere) {
+      // Fatura substitui o cartão inteiro. O que veio de fatura volta ao
+      // reimportar o PDF; o que foi digitado à mão, não — então pergunta.
+      if (emRisco.length) {
+        const perdido = emRisco.reduce((s, t) => s + (+t.valor || 0), 0);
+        const ok = confirm(
+          `Importar a fatura substitui TUDO que está neste cartão.\n\n` +
+          `${emRisco.length} lançamento(s) digitado(s) à mão, somando ${money(perdido)}, serão apagados.\n` +
+          `Esses não voltam reimportando o PDF.\n\n` +
+          `Receitas e despesas gerais não são afetadas.\n\nApagar e lançar a fatura?`);
+        if (!ok) {
+          preview.innerHTML = `<div class="alert">Importação cancelada — nada foi alterado.</div>`;
+          return;
+        }
+      }
       preview.innerHTML = `<div class="alert">⏳ Lançando ${lancamentos.length} lançamento(s)…</div>`;
       gravarFatura(lancamentos, lancamentos.map((_, i) => i), substituir, competencia).then(() => {
         preview.innerHTML = resumoImportacao(competencia, lancamentos.length,
@@ -934,7 +1018,8 @@
         ${estornos.length ? `<br>↩ ${estornos.length} estorno(s) entram com valor negativo, para o total do mês bater com a fatura.` : ""}
         ${futuros.length ? `<br>🔮 <b>${futuros.length} parcela(s) futura(s)</b> serão lançadas nos meses seguintes.` : ""}
         <br>Tudo entra com data <b>${fmtDate(FC.Bills.ymDe(competencia) + "-" + String(Math.min(diaVenc, FC.Bills.diasNoMes(competencia))).padStart(2, "0"))}</b> (vencimento da fatura), que é quando o dinheiro sai da conta.
-        ${substituir.length ? `<br>♻️ <b>${substituir.length} lançamento(s)</b> desta fatura já estavam no app e serão <b>substituídos</b> — o valor do mês é atualizado, não somado.` : ""}
+        ${substituir.length ? `<br>♻️ Os <b>${substituir.length} lançamento(s)</b> que estão hoje neste cartão serão <b>apagados</b> e substituídos por estes — a fatura é a única fonte de verdade do cartão.${
+          emRisco.length ? ` <b class="negative">Atenção: ${emRisco.length} deles foram digitados à mão (${money(emRisco.reduce((s, t) => s + (+t.valor || 0), 0))}) e não voltam.</b>` : ""}` : ""}
       </div>
       ${conferencia}
       <div style="overflow:auto;max-height:360px">
@@ -1017,7 +1102,7 @@
     return out;
   }
 
-  function renderBills(bills) {
+  function renderBills(bills, tx) {
     const body = $("#billsTable"); if (!body) return;
     const Bl = FC.Bills;
     const ym = billsMes || mesComContas(bills);
@@ -1032,17 +1117,20 @@
       sel.value = ym;
     }
 
-    const ocorrencias = Bl.ocorrenciasDoMes(bills, ym).sort((a, b) => {
-      if (!!a.paga !== !!b.paga) return a.paga ? 1 : -1;        // não pagas primeiro
-      return (a.venc || "").localeCompare(b.venc || "");
+    // Conta a pagar e lançamento manual fora do cartão aparecem na MESMA
+    // lista: para quem usa, os dois são a mesma coisa — gasto que não veio
+    // na fatura. Não pagas primeiro, depois por data.
+    const ocorrencias = despesasGeraisDoMes(bills, tx, ym).sort((a, b) => {
+      if (!!a.paga !== !!b.paga) return a.paga ? 1 : -1;
+      return String(a.data || "").localeCompare(String(b.data || ""));
     });
     const vazio = $("#billsEmpty");
     vazio.classList.toggle("hidden", ocorrencias.length > 0);
     if (!ocorrencias.length) {
       const n = (bills || []).length;
       vazio.innerHTML = n
-        ? `Nenhuma conta vence em ${mesLabel(ym)}. Você tem <b>${n} conta(s)</b> cadastrada(s) — troque o mês no seletor acima para vê-las.`
-        : "Nenhuma conta cadastrada. Clique em “+ Nova conta”.";
+        ? `Nenhuma despesa geral em ${mesLabel(ym)}. Você tem <b>${n} cadastrada(s)</b> — troque o mês no seletor acima para vê-las.`
+        : "Nenhuma despesa geral. Clique em “+ Nova despesa” para lançar o que não passa no cartão.";
     }
 
     // O alerta olha TODOS os meses, não só o que está na tela — uma conta
@@ -1064,10 +1152,26 @@
       <div class="row" style="border:0;padding:0"><span>Falta pagar</span><b class="negative">${money(total - pago)}</b></div>` : "";
 
     body.innerHTML = ocorrencias.map((o) => {
-      const dOver = o.venc ? Bl.diasEntre(o.venc, hoje) : 0;
-      const late = !o.paga && dOver > 5;
       const options = `<option value="">—</option>` + cats.map((c) =>
         `<option value="${c.id}" ${c.id === o.category_id ? "selected" : ""}>${c.icone} ${esc(c.nome)}</option>`).join("");
+
+      // Lançamento manual não tem vencimento nem "paguei": ele já aconteceu.
+      if (o.tipo === "manual") {
+        return `<tr class="${o.repetido ? "muted-row" : ""}">
+          <td>${esc(o.descricao)}${o.recorrencia === "mensal" ? ' <span class="badge warn">🔁 Mensal</span>' : ""}${o.repetido ? ' <span class="badge warn">repete</span>' : ""}</td>
+          <td><select class="tx-cat" data-id="${o.id}">${options}</select></td>
+          <td>${o.data ? fmtDate(o.data) : "—"}</td>
+          <td class="right">${money(o.valor)}</td>
+          <td><span class="badge">lançamento avulso</span></td>
+          <td class="right nowrap">
+            <button class="link" data-edit="expense" data-id="${o.id}">editar</button>
+            ${o.repetido ? "" : `<button class="link-danger" data-del="transactions" data-del-label="despesa" data-id="${o.id}">excluir</button>`}
+          </td>
+        </tr>`;
+      }
+
+      const dOver = o.data ? Bl.diasEntre(o.data, hoje) : 0;
+      const late = !o.paga && dOver > 5;
       const status = o.paga
         ? `<span class="badge">✔ Paga${o.pagaEm ? " em " + fmtDate(o.pagaEm) : ""}</span>`
         : dOver > 5 ? `<span class="badge bad">Atrasada ${dOver}d</span>`
@@ -1077,13 +1181,13 @@
       return `<tr class="${late ? "bill-late" : ""}">
         <td>${esc(o.descricao)}${o.recorrencia === "mensal" ? ' <span class="badge warn">🔁 Mensal</span>' : ""}</td>
         <td><select class="bill-cat" data-id="${o.id}">${options}</select></td>
-        <td>${o.venc ? fmtDate(o.venc) : "—"}</td>
+        <td>${o.data ? fmtDate(o.data) : "—"}</td>
         <td class="right"><input class="bill-val" type="number" step="0.01" min="0" value="${o.valor}"
           data-id="${o.id}" data-ym="${o.ym}" aria-label="valor de ${esc(o.descricao)} em ${mesLabel(o.ym)}"></td>
         <td><label class="chk"><input type="checkbox" class="bill-paid" data-id="${o.id}" data-ym="${o.ym}" ${o.paga ? "checked" : ""}> ${status}</label></td>
         <td class="right nowrap">
           <button class="link" data-edit="bill" data-id="${o.id}">editar</button>
-          <button class="link-danger" data-del="bills" data-del-label="conta" data-id="${o.id}">excluir</button>
+          <button class="link-danger" data-del="bills" data-del-label="despesa" data-id="${o.id}">excluir</button>
         </td>
       </tr>`;
     }).join("");
@@ -1203,9 +1307,9 @@
       { name: "category_id", label: "Categoria", type: "select", options: cats.filter((c) => c.tipo === "despesa").map((c) => ({ v: c.id, t: c.icone + " " + c.nome })) }
     ],
     bill: (cats) => [
-      { name: "descricao", label: "Descrição da conta", type: "text", full: true, req: true },
+      { name: "descricao", label: "Descrição da despesa", type: "text", full: true, req: true },
       { name: "valor", label: "Valor padrão (R$)", type: "number", req: true },
-      { name: "vencimento", label: "1º vencimento", type: "date", value: today() },
+      { name: "vencimento", label: "Data / 1º vencimento", type: "date", value: today() },
       { name: "recorrencia", label: "Recorrência", type: "select", options: [{ v: "nenhuma", t: "Única" }, { v: "mensal", t: "🔁 Mensal (repete todo mês)" }] },
       { name: "category_id", label: "Categoria", type: "select", options: cats.filter((c) => c.tipo === "despesa").map((c) => ({ v: c.id, t: c.icone + " " + c.nome })) }
     ],
@@ -1223,7 +1327,7 @@
     income: ["Nova receita", "Editar receita"],
     card: ["Novo cartão", "Editar cartão"],
     installment: ["Compra parcelada no cartão", "Compra parcelada no cartão"],
-    bill: ["Nova conta a pagar", "Editar conta a pagar"],
+    bill: ["Nova despesa geral", "Editar despesa geral"],
     budget: ["Teto mensal total", "Editar teto mensal"],
     goal: ["Nova meta", "Editar meta"],
     account: ["Saldo em conta", "Atualizar saldo em conta"]
@@ -1825,9 +1929,17 @@
       }
     });
 
-    // Seletor de mês das contas a pagar
+    // Seletor de mês das despesas gerais
     const selMes = $("#billsMes");
     if (selMes) selMes.addEventListener("change", () => { billsMes = selMes.value; render(); });
+
+    // Seletor de mês da tela "Meu mês"
+    const selMesCartao = $("#mesCartao");
+    if (selMesCartao) selMesCartao.addEventListener("change", () => {
+      mesPainel = selMesCartao.value;
+      billsMes = mesPainel;      // as duas telas andam juntas
+      render();
+    });
 
     const billsTable = $("#billsTable");
     if (billsTable) billsTable.addEventListener("change", async (e) => {
@@ -1855,7 +1967,13 @@
         return;
       }
       const cat = e.target.closest(".bill-cat");
-      if (cat) { await Store.update("bills", cat.dataset.id, { category_id: cat.value || null }); render(); }
+      if (cat) { await Store.update("bills", cat.dataset.id, { category_id: cat.value || null }); render(); return; }
+      // Categoria de lançamento avulso na mesma tabela
+      const catTx = e.target.closest(".tx-cat");
+      if (catTx) {
+        await Store.update("transactions", catTx.dataset.id, { category_id: catTx.value || null });
+        render();
+      }
     });
   }
 
@@ -1869,6 +1987,9 @@
     await Store.init();
     // Abre no mês que tem movimento — normalmente o corrente.
     dashFilter.mes = mesComMovimento(Store.allSync("transactions"), Store.allSync("bills"));
+    // "Meu mês" e "Despesas gerais" abrem no mesmo mês do painel.
+    mesPainel = dashFilter.mes;
+    billsMes = dashFilter.mes;
     // O filtro de Pessoa entra com o usuário logado SÓ se ele já tiver
     // lançamentos com esse nome (senão o painel apareceria vazio).
     // O painel abre com a casa INTEIRA. Antes ele se filtrava sozinho no

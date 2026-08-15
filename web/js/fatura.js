@@ -397,27 +397,25 @@ FC.Fatura = (function () {
     return out;
   }
 
-  // Lançamentos que a importação vai SUBSTITUIR:
-  //  • os da mesma fatura (reimportar o mesmo PDF), e
-  //  • as projeções de faturas ANTERIORES do mesmo cartão que caem nesta
-  //    competência ou depois — a fatura nova é a verdade mais recente sobre
-  //    o que ainda está em aberto. Sem isso, a parcela 4/10 entraria duas
-  //    vezes: como projeção da fatura passada e como linha da fatura atual.
-  // Lançamento digitado à mão (sem `fatura_id`) nunca é tocado.
-  function substituiveis(transacoes, card_id, competencia) {
-    const faturaId = card_id + ":" + competencia;
-    const prefixo = card_id + ":";
-    return (transacoes || []).filter((t) => {
-      if (t.card_id !== card_id || !t.fatura_id) return false;
-      if (t.fatura_id === faturaId) return true;
-      return !!t.projecao &&
-        String(t.fatura_id).indexOf(prefixo) === 0 &&
-        String(t.data || "").slice(0, 7) >= competencia;
-    });
+  // A fatura é a ÚNICA fonte de verdade do cartão. Importar limpa tudo que
+  // está pendurado nele — o que veio de faturas anteriores e também o que foi
+  // digitado à mão — e relança do zero. Sem isso o total do cartão vira uma
+  // mistura de fatura com sobra de lançamento antigo, e não bate com nada.
+  //
+  // Só mexe NESTE cartão: outro cartão, receita e despesa geral ficam intactos.
+  function substituiveis(transacoes, card_id) {
+    return (transacoes || []).filter((t) => t.card_id === card_id);
+  }
+
+  // Dos que serão apagados, quais foram digitados à mão (não vieram de
+  // fatura). São os únicos que não dá para recuperar reimportando o PDF —
+  // por isso a tela avisa antes de apagar.
+  function manuaisEmRisco(transacoes, card_id) {
+    return substituiveis(transacoes, card_id).filter((t) => !t.fatura_id);
   }
 
   return {
-    lerLinhas, analisar, expandir, substituiveis, diaVencimento,
+    lerLinhas, analisar, expandir, substituiveis, manuaisEmRisco, diaVencimento,
     valorBR, acharParcela, ehRecorrente, chaveSerie, recorrentesConhecidas
   };
 })();
