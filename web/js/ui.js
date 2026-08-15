@@ -13,7 +13,7 @@
  * competência, store.js guarda no cofre da família.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v30";
+  const APP_VERSION = "v32";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 9;
 
