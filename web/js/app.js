@@ -5,7 +5,7 @@
 (function () {
   // Versão do app, mostrada no rodapé da barra lateral. Anda junto com o
   // CACHE do sw.js — as duas sobem no mesmo commit.
-  const APP_VERSION = "v23";
+  const APP_VERSION = "v25";
 
   const { Store, Forecast } = FC;
   const cfg = window.FC_CONFIG || {};
@@ -1977,8 +1977,35 @@
     });
   }
 
+  // ---------- Versão ----------
+  // Fica pronta ANTES do login: se a versão só aparecesse depois de entrar,
+  // quem estivesse preso numa tela velha não teria como descobrir que ela é
+  // velha. Clicar apaga service worker e caches e busca a mais nova.
+  function marcarVersao() {
+    const ver = $("#verBadge");
+    if (!ver) return;
+    ver.textContent = APP_VERSION;
+    ver.style.cursor = "pointer";
+    ver.addEventListener("click", async () => {
+      ver.textContent = "…";
+      try {
+        if ("serviceWorker" in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map((r) => r.unregister()));
+        }
+        if (window.caches) {
+          const chaves = await caches.keys();
+          await Promise.all(chaves.map((k) => caches.delete(k)));
+        }
+      } catch (e) {}
+      sessionStorage.removeItem("fc_recarregou");
+      location.reload();
+    });
+  }
+
   // ---------- Boot ----------
   async function boot() {
+    marcarVersao();
     if (typeof pdfjsLib !== "undefined") {
       pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
     }
@@ -1998,28 +2025,6 @@
     badge.textContent = window.FC_MODE === "online" ? "online" : "offline";
     badge.classList.toggle("online", window.FC_MODE === "online");
 
-    // Qual versão está na tela. Clicar força a busca da mais nova — saída
-    // manual para quando o navegador insistir em servir a cópia velha.
-    const ver = $("#verBadge");
-    if (ver) {
-      ver.textContent = APP_VERSION;
-      ver.style.cursor = "pointer";
-      ver.addEventListener("click", async () => {
-        ver.textContent = "…";
-        try {
-          if ("serviceWorker" in navigator) {
-            const regs = await navigator.serviceWorker.getRegistrations();
-            await Promise.all(regs.map((r) => r.unregister()));
-          }
-          if (window.caches) {
-            const chaves = await caches.keys();
-            await Promise.all(chaves.map((k) => caches.delete(k)));
-          }
-        } catch (e) {}
-        sessionStorage.removeItem("fc_recarregou");
-        location.reload();
-      });
-    }
     bind();
     // Sincronização em tempo real: re-renderiza quando a família altera algo.
     window.addEventListener("fc:remote", () => render());

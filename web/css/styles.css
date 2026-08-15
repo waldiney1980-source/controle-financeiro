@@ -407,6 +407,9 @@ input[type=file]::file-selector-button:hover{background:rgba(255,255,255,.1)}
   .nav-badge{position:absolute;top:3px;right:9px;margin:0}
   .sidebar-foot{padding:0 2px;border:0;flex:0 0 auto}
   .sidebar-foot #modeBadge{display:none}
+  /* A versão continua visível no celular — é ela que diz se a tela na sua
+     frente é a que foi publicada. Miúda para não roubar espaço da navegação. */
+  .sidebar-foot #verBadge{font-size:9px;padding:3px 5px;opacity:.75}
   .fc-user-chip{margin:0;padding:5px;background:transparent;box-shadow:none;flex-direction:column;gap:2px}
   .fc-user-mail{display:none}
   .fc-user-av{width:26px;height:26px;font-size:12px}
