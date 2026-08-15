@@ -400,21 +400,30 @@ FC.Fatura = (function () {
     return out;
   }
 
-  // A fatura é a ÚNICA fonte de verdade do cartão. Importar limpa tudo que
-  // está pendurado nele — o que veio de faturas anteriores e também o que foi
-  // digitado à mão — e relança do zero. Sem isso o total do cartão vira uma
-  // mistura de fatura com sobra de lançamento antigo, e não bate com nada.
+  // A fatura é a fonte de verdade do CARTÃO NAQUELE MÊS. Importar limpa:
+  //   • tudo daquela competência (inclusive o que foi digitado à mão nela),
+  //   • as projeções de faturas mais antigas que caem nesta competência ou
+  //     depois — a fatura nova é a notícia mais recente sobre o que segue
+  //     em aberto, senão a parcela 4/10 entraria duas vezes.
   //
-  // Só mexe NESTE cartão: outro cartão, receita e despesa geral ficam intactos.
-  function substituiveis(transacoes, card_id) {
-    return (transacoes || []).filter((t) => t.card_id === card_id);
+  // Faturas de OUTROS meses continuam de pé: dá para importar cinco meses
+  // seguidos e cada um guarda o seu. Outro cartão e o que está fora do
+  // cartão nunca são tocados.
+  function substituiveis(transacoes, card_id, competencia) {
+    const faturaId = card_id + ":" + competencia;
+    return (transacoes || []).filter((t) => {
+      if (t.card_id !== card_id) return false;
+      const mes = String(t.data || "").slice(0, 7);
+      if (t.fatura_id === faturaId) return true;
+      if (t.projecao && mes >= competencia) return true;
+      return !t.fatura_id && mes === competencia;
+    });
   }
 
-  // Dos que serão apagados, quais foram digitados à mão (não vieram de
-  // fatura). São os únicos que não dá para recuperar reimportando o PDF —
-  // por isso a tela avisa antes de apagar.
-  function manuaisEmRisco(transacoes, card_id) {
-    return substituiveis(transacoes, card_id).filter((t) => !t.fatura_id);
+  // Dos que serão apagados, quais foram digitados à mão. São os únicos que
+  // não voltam reimportando o PDF — por isso a tela avisa antes.
+  function manuaisEmRisco(transacoes, card_id, competencia) {
+    return substituiveis(transacoes, card_id, competencia).filter((t) => !t.fatura_id);
   }
 
   return {

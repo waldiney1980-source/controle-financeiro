@@ -7,8 +7,8 @@
  *     dados, com sincronização em TEMPO REAL.
  *   • OFFLINE (sem Supabase): mantém tudo no localStorage, como antes.
  *
- * A API pública é idêntica à Fase 1, então app.js/forecast.js não
- * precisam mudar.
+ * A API pública não muda entre os dois modos, então quem consome
+ * (ui.js) não precisa saber em qual deles está.
  * =========================================================== */
 window.FC = window.FC || {};
 
@@ -44,10 +44,12 @@ FC.Store = (function () {
       { nome: "Cartão de crédito", tipo: "despesa", cor: "#64748b", icone: "💳" },
       { nome: "Outras despesas", tipo: "despesa", cor: "#6b7280", icone: "📦" }
     ].map((c) => ({ id: uid(), parent_id: null, ...c }));
-    return { categories: cats, accounts: [], cards: [], transactions: [], budgets: [], goals: [], bills: [], catrules: [] };
+    return { categories: cats, accounts: [], cards: [], transactions: [], budgets: [], goals: [], bills: [], catrules: [], prefs: [] };
   }
 
-  const COLLECTIONS = ["categories", "accounts", "cards", "transactions", "budgets", "goals", "bills", "catrules"];
+  // "prefs" guarda uma linha só, com as preferências da casa (hoje: a renda
+  // mensal informada). Fica no mesmo cofre, então vale para a família toda.
+  const COLLECTIONS = ["categories", "accounts", "cards", "transactions", "budgets", "goals", "bills", "catrules", "prefs"];
 
   function ensureShape(d) {
     d = d || {};
