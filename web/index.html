@@ -119,11 +119,8 @@
         </div>
       </header>
 
-      <!-- Resumo do mês: entra − sai = sobra -->
-      <div class="filters section">
-        <div class="filt"><label>📅 Mês</label><select id="mesCartao"></select></div>
-      </div>
-      <div class="hero" id="mesResumo">
+      <!-- Resumo do mês. O mês vem da fatura importada — não se escolhe. -->
+      <div class="hero section" id="mesResumo">
         <div class="hero-top"><span class="hero-label" id="mesLabelTop">Sobra do mês</span></div>
         <div class="hero-value" id="mesSaldo">R$ 0,00</div>
         <div class="hero-sub" id="mesSub"></div>
@@ -150,7 +147,9 @@
         <div id="fatSemCartao"></div>
         <div class="filters">
           <div class="filt"><label>💳 Cartão</label><select id="fatCard"></select></div>
-          <div class="filt"><label>📅 Competência da fatura</label><input type="month" id="fatMes"></div>
+          <!-- O mês vem do vencimento impresso no PDF. Este campo só aparece
+               quando a leitura não encontra o vencimento. -->
+          <div class="filt hidden" id="fatMesWrap"><label>📅 Competência da fatura</label><input type="month" id="fatMes"></div>
         </div>
         <input type="file" id="fatFile" accept=".pdf,application/pdf">
         <div id="fatPreview" class="section"></div>

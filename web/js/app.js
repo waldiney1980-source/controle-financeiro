@@ -664,10 +664,20 @@
   }
 
   // ---------- O mês inteiro num lugar só ----------
-  // Mês em foco na tela "Meu mês". "" = o app escolhe (o corrente).
-  let mesPainel = "";
+  // O mês desta tela NÃO se escolhe: ele é a competência da última fatura
+  // importada. Você sobe a fatura e a tela passa a ser a daquele mês —
+  // seletor aqui só criaria a chance de olhar um mês e ler outro.
+  function mesDaFatura() {
+    let ultima = "";
+    Store.allSync("transactions").forEach((t) => {
+      if (!t.fatura_id) return;
+      const ym = String(t.fatura_id).split(":")[1] || "";
+      if (ym && ym > ultima) ultima = ym;
+    });
+    return ultima;
+  }
 
-  function mesEmFoco() { return mesPainel || today().slice(0, 7); }
+  function mesEmFoco() { return mesDaFatura() || today().slice(0, 7); }
 
   // Despesa geral do mês = conta a pagar + lançamento manual fora do cartão.
   // As duas coisas moram em coleções diferentes por história do app, mas para
@@ -699,27 +709,9 @@
     ).reduce((s, t) => s + (+t.valor || 0), 0);
   }
 
-  function opcoesMesPainel(tx, bills) {
-    const Bl = FC.Bills;
-    const atual = today().slice(0, 7);
-    let de = atual, ate = atual;
-    const marca = (ym) => { if (!ym) return; if (ym < de) de = ym; if (ym > ate) ate = ym; };
-    (tx || []).forEach((t) => marca(String(t.data || "").slice(0, 7)));
-    (bills || []).forEach((b) => marca(Bl.ymDe(b.vencimento)));
-    const out = [];
-    for (let ym = de; Bl.ymDiff(ym, ate) >= 0; ym = Bl.ymAdd(ym, 1)) out.push(ym);
-    return out.reverse();
-  }
-
   function renderMesCartao(tx, bills) {
     const ym = mesEmFoco();
-    const sel = $("#mesCartao");
-    if (sel) {
-      const meses = opcoesMesPainel(tx, bills);
-      if (meses.indexOf(ym) < 0) meses.unshift(ym);
-      sel.innerHTML = meses.map((m) => `<option value="${m}">${mesLabel(m)}</option>`).join("");
-      sel.value = ym;
-    }
+    const temFatura = !!mesDaFatura();
 
     const receitas = ocorrenciasTx(tx || [], ym, ym)
       .filter((t) => t.tipo === "receita").reduce((s, t) => s + (+t.valor || 0), 0);
@@ -733,12 +725,15 @@
     setMoney("mesSaldo", sobra);
     applyHide();
 
+    // O rótulo diz de qual mês é a tela, já que não há seletor para consultar.
     const rot = $("#mesLabelTop");
-    if (rot) rot.textContent = sobra < 0 ? "Saiu mais do que entrou" : "Sobra do mês";
+    if (rot) rot.textContent = (sobra < 0 ? "Saiu mais do que entrou em " : "Sobra de ") + mesLabel(ym);
     const sub = $("#mesSub");
     if (sub) {
       const comp = receitas > 0 ? ((fatura + gerais) / receitas) * 100 : 0;
-      sub.textContent = `${mesLabel(ym)} · ${receitas > 0 ? pct(comp) + " da renda comprometida" : "sem receita lançada"}`;
+      sub.textContent = temFatura
+        ? `Mês da última fatura importada · ${receitas > 0 ? pct(comp) + " da renda comprometida" : "sem receita lançada"}`
+        : "Nenhuma fatura importada ainda — envie o PDF abaixo e a tela passa a ser a do mês dela.";
     }
     const hero = $("#mesResumo");
     if (hero) hero.classList.toggle("negativo", sobra < 0);
@@ -899,9 +894,17 @@
       const linhas = await FC.Fatura.lerLinhas(file);
       const padraoMes = $("#fatMes").value || today().slice(0, 7);
       const res = FC.Fatura.analisar(linhas, padraoMes);
-      // O que o PDF diz manda sobre o que estava no campo — e o campo passa
-      // a mostrar isso, para o usuário ver qual competência será gravada.
       if (res.competencia) $("#fatMes").value = res.competencia;
+      // O mês é fato da fatura: sai do vencimento impresso no PDF. O campo
+      // só aparece quando a leitura não acha o vencimento — aí sim é palpite
+      // e precisa da sua confirmação.
+      const wrap = $("#fatMesWrap");
+      if (wrap) wrap.classList.toggle("hidden", !!res.competenciaDetectada);
+      if (!res.competenciaDetectada) {
+        preview.innerHTML = `<div class="alert bad">Não achei o vencimento neste PDF.
+          Confirme a <b>competência</b> no campo que apareceu acima e envie o arquivo de novo.</div>`;
+        return;
+      }
       renderFaturaPreview(res, card, true);
     } catch (e) {
       preview.innerHTML = `<div class="alert bad">Não consegui ler o PDF: ${esc(e.message)}</div>`;
@@ -1933,13 +1936,6 @@
     const selMes = $("#billsMes");
     if (selMes) selMes.addEventListener("change", () => { billsMes = selMes.value; render(); });
 
-    // Seletor de mês da tela "Meu mês"
-    const selMesCartao = $("#mesCartao");
-    if (selMesCartao) selMesCartao.addEventListener("change", () => {
-      mesPainel = selMesCartao.value;
-      billsMes = mesPainel;      // as duas telas andam juntas
-      render();
-    });
 
     const billsTable = $("#billsTable");
     if (billsTable) billsTable.addEventListener("change", async (e) => {
@@ -1987,9 +1983,8 @@
     await Store.init();
     // Abre no mês que tem movimento — normalmente o corrente.
     dashFilter.mes = mesComMovimento(Store.allSync("transactions"), Store.allSync("bills"));
-    // "Meu mês" e "Despesas gerais" abrem no mesmo mês do painel.
-    mesPainel = dashFilter.mes;
-    billsMes = dashFilter.mes;
+    // "Despesas gerais" abre no mesmo mês da fatura, quando há uma importada.
+    billsMes = mesEmFoco();
     // O filtro de Pessoa entra com o usuário logado SÓ se ele já tiver
     // lançamentos com esse nome (senão o painel apareceria vazio).
     // O painel abre com a casa INTEIRA. Antes ele se filtrava sozinho no

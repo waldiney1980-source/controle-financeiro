@@ -247,6 +247,9 @@ FC.Fatura = (function () {
     const abatido = estornos.reduce((s, i) => s + i.valor, 0);
     return {
       competencia,
+      // false = o PDF não disse o vencimento e a competência veio do palpite
+      // de fora. Só nesse caso a tela precisa perguntar o mês.
+      competenciaDetectada: !!cab.competencia,
       vencimento: cab.vencimento,
       totalDeclarado: cab.total,
       itens,
