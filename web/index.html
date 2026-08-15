@@ -137,6 +137,18 @@
           <button class="btn" data-action="new-card">+ Novo cartão</button>
         </div>
       </header>
+      <!-- Importar a fatura em PDF -->
+      <div class="card section" id="faturaBox">
+        <div class="section-title">📄 Importar fatura (PDF)</div>
+        <p class="hint">Envie o PDF da fatura. O app lê as compras, identifica as <b>parcelas</b> e já lança as que ainda faltam nos meses seguintes. Reimportar a mesma fatura <b>não soma de novo</b> — ela substitui o que foi importado antes.</p>
+        <div class="filters">
+          <div class="filt"><label>💳 Cartão</label><select id="fatCard"></select></div>
+          <div class="filt"><label>📅 Competência da fatura</label><input type="month" id="fatMes"></div>
+        </div>
+        <input type="file" id="fatFile" accept=".pdf,application/pdf">
+        <div id="fatPreview" class="section"></div>
+      </div>
+
       <div class="grid three" id="cardsGrid"></div>
       <div class="empty hidden" id="cardsEmpty">Nenhum cartão cadastrado.</div>
     </section>
@@ -263,6 +275,7 @@
 <script src="js/auth.js"></script>
 <script src="js/store.js"></script>
 <script src="js/bills.js"></script>
+<script src="js/fatura.js"></script>
 <script src="js/forecast.js"></script>
 <script src="js/app.js"></script>
 </body>

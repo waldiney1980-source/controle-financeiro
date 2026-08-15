@@ -170,6 +170,11 @@
 
   // ---------- Gráfico de rosca (categorias) ----------
   function renderDonut(container, rows, catById) {
+    // Estorno de cartão entra como valor negativo e pode zerar (ou virar) o
+    // total de uma categoria. Fatia negativa não tem como ser desenhada num
+    // gráfico de rosca, então a categoria sai — o valor continua contado
+    // no total do mês, que é onde ele precisa aparecer.
+    rows = (rows || []).filter((r) => r[1] > 0);
     if (!rows.length) { container.innerHTML = '<div class="empty">Sem despesas neste mês.</div>'; return; }
     const total = rows.reduce((s, r) => s + r[1], 0);
     const C = 2 * Math.PI * 46;      // circunferência (r=46)
@@ -479,6 +484,7 @@
     renderExpenses(tx, catById);
     renderIncome(tx, catById);
     renderCards(cards, tx);
+    renderFaturaBox(cards);
     renderBills(bills);
     renderGoals(goals);
     renderForecast(tx, accounts, goals, bills);
@@ -753,6 +759,174 @@
         </div>
       </div>`;
     }).join("");
+  }
+
+  // ---------- Importar fatura do cartão (PDF) ----------
+  // A leitura do PDF mora em fatura.js. Aqui fica só a tela: escolher o
+  // cartão, conferir o que foi lido e confirmar.
+  let faturaLida = null;        // resultado da última leitura, aguardando confirmação
+
+  // A fatura já vem agrupada por ramo ("Restaurantes", "Transporte"). Quem
+  // classificou foi o banco, que sabe o ramo do estabelecimento — vale mais
+  // do que adivinhar pelo nome da loja, que vem abreviado e cortado.
+  const CAT_POR_SECAO = {
+    restaurantes: "Alimentação", supermercados: "Alimentação", alimentacao: "Alimentação",
+    saude: "Saúde", farmacias: "Saúde",
+    transporte: "Transporte", combustivel: "Transporte",
+    vestuario: "Compras", eletronicos: "Compras", casa: "Compras", beleza: "Compras",
+    viagens: "Lazer", entretenimento: "Lazer", lazer: "Lazer",
+    educacao: "Educação"
+    // "Serviços" e "Diversos" ficam de fora de propósito: são genéricos
+    // demais e a descrição costuma classificar melhor.
+  };
+
+  function categoriaDaFatura(desc, secao) {
+    // O que o usuário já corrigiu à mão continua mandando em tudo.
+    const aprendida = categoriaAprendida(desc);
+    if (aprendida && aprendida.tipo === "despesa") return aprendida;
+    const chave = String(secao || "").toLowerCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+    const nome = CAT_POR_SECAO[chave];
+    if (nome) {
+      const c = Store.allSync("categories").find((x) => x.tipo === "despesa" && x.nome === nome);
+      if (c) return c;
+    }
+    return suggestCategory(desc);
+  }
+
+  function renderFaturaBox(cards) {
+    const box = $("#faturaBox"); if (!box) return;
+    box.style.display = cards.length ? "" : "none";
+    const sel = $("#fatCard");
+    if (sel) {
+      const atual = sel.value;
+      sel.innerHTML = cards.map((c) => `<option value="${c.id}">💳 ${esc(c.nome)}</option>`).join("");
+      if (atual && cards.some((c) => c.id === atual)) sel.value = atual;
+    }
+    const mes = $("#fatMes");
+    if (mes && !mes.value) mes.value = today().slice(0, 7);
+  }
+
+  async function handleFaturaFile(file) {
+    const preview = $("#fatPreview");
+    const card = Store.allSync("cards").find((c) => c.id === $("#fatCard").value);
+    if (!card) { preview.innerHTML = `<div class="alert bad">Escolha o cartão antes de enviar o PDF.</div>`; return; }
+    preview.innerHTML = `<div class="alert">⏳ Lendo <b>${esc(file.name)}</b>…</div>`;
+    try {
+      const linhas = await FC.Fatura.lerLinhas(file);
+      const padraoMes = $("#fatMes").value || today().slice(0, 7);
+      const res = FC.Fatura.analisar(linhas, padraoMes);
+      // O que o PDF diz manda sobre o que estava no campo — e o campo passa
+      // a mostrar isso, para o usuário ver qual competência será gravada.
+      if (res.competencia) $("#fatMes").value = res.competencia;
+      renderFaturaPreview(res, card);
+    } catch (e) {
+      preview.innerHTML = `<div class="alert bad">Não consegui ler o PDF: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderFaturaPreview(res, card) {
+    const preview = $("#fatPreview");
+    const competencia = $("#fatMes").value || res.competencia;
+    if (!res.itens.length) {
+      preview.innerHTML = `<div class="alert bad">
+        Não encontrei nenhuma compra neste PDF. Li ${res.ignoradas.length + 0} linha(s) de cabeçalho/total.
+        <br>Faturas variam muito de banco para banco — me diga qual é o seu que eu ajusto a leitura.</div>`;
+      return;
+    }
+
+    const diaVenc = FC.Fatura.diaVencimento(card, res.vencimento);
+    const lancamentos = FC.Fatura.expandir(res.itens, {
+      competencia, card_id: card.id, dia_venc: diaVenc,
+      categoriaDe: (desc, secao) => categoriaDaFatura(desc, secao), pessoa: currentPerson()
+    });
+    faturaLida = { lancamentos, card, competencia, res };
+
+    const daFatura = lancamentos.filter((l) => !l.projecao);
+    const futuros = lancamentos.filter((l) => l.projecao);
+    const estornos = daFatura.filter((l) => l.estorno);
+    const pagamentos = res.itens.filter((i) => i.pagamento);
+    const substituir = FC.Fatura.substituiveis(Store.allSync("transactions"), card.id, competencia);
+    const somaFatura = daFatura.reduce((s, l) => s + l.valor, 0);
+
+    const cats = Store.allSync("categories").filter((c) => c.tipo === "despesa");
+    const optsDe = (sel) => cats.map((c) =>
+      `<option value="${c.id}"${c.id === sel ? " selected" : ""}>${c.icone} ${esc(c.nome)}</option>`).join("");
+
+    // Confere a soma contra o total impresso: se não bater, alguma linha
+    // não foi lida — melhor avisar do que gravar um valor errado calado.
+    let conferencia = "";
+    if (res.totalDeclarado) {
+      const dif = Math.abs(res.totalDeclarado - somaFatura);
+      conferencia = dif < 0.05
+        ? `<div class="alert ok">✅ Confere com o total impresso na fatura: <b>${money(res.totalDeclarado)}</b>.</div>`
+        : `<div class="alert bad">⚠️ A soma do que eu li (<b>${money(somaFatura)}</b>) não bate com o total impresso na fatura (<b>${money(res.totalDeclarado)}</b>) — diferença de ${money(dif)}. Confira a lista abaixo antes de importar.</div>`;
+    }
+
+    const linhaItem = (l, i) => `
+      <tr class="${l.projecao ? "muted-row" : ""}">
+        <td><input type="checkbox" class="fat-ck" data-i="${i}" checked></td>
+        <td>${l.data_compra ? fmtDate(l.data_compra) : "—"}</td>
+        <td>${esc(l.descricao)}${l.projecao ? ` <span class="badge warn">🔮 ${mesLabel(String(l.data).slice(0, 7))}</span>` : ""}${l.estorno ? ' <span class="badge">↩ estorno</span>' : ""}${l.pessoa ? `<div class="muted">${esc(l.pessoa)}</div>` : ""}</td>
+        <td><select class="fat-cat" data-i="${i}">${optsDe(l.category_id)}</select></td>
+        <td class="right ${l.valor < 0 ? "positive" : "negative"}">${money(l.valor)}</td>
+      </tr>`;
+
+    preview.innerHTML = `
+      <div class="alert">
+        Fatura de <b>${mesLabel(competencia)}</b> — ${daFatura.length - estornos.length} compra(s), total <b>${money(somaFatura)}</b>.
+        ${estornos.length ? `<br>↩ ${estornos.length} estorno(s) entram com valor negativo, para o total do mês bater com a fatura.` : ""}
+        ${futuros.length ? `<br>🔮 <b>${futuros.length} parcela(s) futura(s)</b> serão lançadas nos meses seguintes.` : ""}
+        <br>Tudo entra com data <b>${fmtDate(FC.Bills.ymDe(competencia) + "-" + String(Math.min(diaVenc, FC.Bills.diasNoMes(competencia))).padStart(2, "0"))}</b> (vencimento da fatura), que é quando o dinheiro sai da conta.
+        ${substituir.length ? `<br>♻️ <b>${substituir.length} lançamento(s)</b> desta fatura já estavam no app e serão <b>substituídos</b> — o valor do mês é atualizado, não somado.` : ""}
+      </div>
+      ${conferencia}
+      <div style="overflow:auto;max-height:360px">
+        <table class="table">
+          <thead><tr>
+            <th><input type="checkbox" id="fatTodos" checked></th>
+            <th>Compra</th><th>Descrição</th><th>Categoria</th><th class="right">Valor</th>
+          </tr></thead>
+          <tbody>${lancamentos.map(linhaItem).join("")}</tbody>
+        </table>
+      </div>
+      ${pagamentos.length ? `<details class="section"><summary>${pagamentos.length} pagamento(s) da fatura anterior — não entram (é a quitação do mês passado)</summary>
+        ${pagamentos.map((c) => `<div class="row"><span>${esc(c.descricao)}</span><b class="positive">${money(c.valor)}</b></div>`).join("")}</details>` : ""}
+      ${res.ignoradas.length ? `<details class="section"><summary>${res.ignoradas.length} linha(s) ignorada(s) — totais, pagamentos e cabeçalho</summary>
+        ${res.ignoradas.slice(0, 40).map((l) => `<div class="hint">${esc(l.linha)}</div>`).join("")}</details>` : ""}
+      <div class="actions"><button class="btn" id="confirmFatura">Importar fatura</button></div>`;
+
+    const marcados = () => $$(".fat-ck", preview).filter((c) => c.checked).map((c) => +c.dataset.i);
+    const atualizaBotao = () => { $("#confirmFatura").textContent = `Importar ${marcados().length} lançamento(s)`; };
+    atualizaBotao();
+
+    preview.querySelector("table").addEventListener("change", (e) => {
+      if (e.target.id === "fatTodos") $$(".fat-ck", preview).forEach((c) => { c.checked = e.target.checked; });
+      const sel = e.target.closest(".fat-cat");
+      if (sel) lancamentos[+sel.dataset.i].category_id = sel.value || null;
+      atualizaBotao();
+    });
+
+    $("#confirmFatura").onclick = async () => {
+      const idx = marcados();
+      if (!idx.length) { alert("Marque pelo menos um lançamento para importar."); return; }
+      const btn = $("#confirmFatura");
+      btn.disabled = true; btn.textContent = "Importando…";
+
+      // Primeiro apaga o que esta fatura substitui, depois grava. Nesta ordem
+      // o total do mês fica sendo o da fatura nova — nunca a soma das duas.
+      for (const t of substituir) await Store.remove("transactions", t.id);
+      for (const i of idx) {
+        const { catNome, ...rest } = lancamentos[i];
+        await Store.add("transactions", rest);
+        if (!rest.projecao) await aprenderCategoria(rest.descricao, rest.category_id);
+      }
+      preview.innerHTML = `<div class="alert ok">✅ Fatura de ${mesLabel(competencia)} importada:
+        <b>${idx.length} lançamento(s)</b>${substituir.length ? `, substituindo ${substituir.length} anterior(es)` : ""}.</div>`;
+      $("#fatFile").value = "";
+      faturaLida = null;
+      render();
+    };
   }
 
   // ---------- Contas a pagar ----------
@@ -1321,30 +1495,18 @@
     });
   }
 
-  async function pdfToMatrix(file) {
-    if (typeof pdfjsLib === "undefined") throw new Error("A biblioteca de PDF não carregou (precisa de internet).");
-    const buf = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  // Extrato em PDF: só as linhas que têm data COMPLETA e valor. Fatura de
+  // cartão não passa por aqui — ela usa DD/MM e tem tratamento próprio.
+  function pdfLinhasParaMatriz(linhas) {
     const rows = [["Data", "Descrição", "Valor"]];
     const reDate = /(\d{2}\/\d{2}\/\d{2,4})/;
     const reVal = /(-?\(?\s*R?\$?\s*\d{1,3}(?:\.\d{3})*,\d{2}\)?\s*-?)/;
-    for (let p = 1; p <= pdf.numPages; p++) {
-      const page = await pdf.getPage(p);
-      const content = await page.getTextContent();
-      const linesMap = {};
-      content.items.forEach((it) => {
-        const y = Math.round(it.transform[5]);
-        (linesMap[y] = linesMap[y] || []).push({ x: it.transform[4], s: it.str });
-      });
-      Object.keys(linesMap).sort((a, b) => b - a).forEach((y) => {
-        const line = linesMap[y].sort((a, b) => a.x - b.x).map((o) => o.s).join(" ").replace(/\s+/g, " ").trim();
-        const md = line.match(reDate), mv = line.match(reVal);
-        if (md && mv) {
-          let desc = line.replace(md[1], "").replace(mv[1], "").replace(/\s+/g, " ").trim() || "Lançamento";
-          rows.push([md[1], desc, mv[1]]);
-        }
-      });
-    }
+    linhas.forEach((line) => {
+      const md = line.match(reDate), mv = line.match(reVal);
+      if (!md || !mv) return;
+      const desc = line.replace(md[1], "").replace(mv[1], "").replace(/\s+/g, " ").trim() || "Lançamento";
+      rows.push([md[1], desc, mv[1]]);
+    });
     return rows;
   }
 
@@ -1432,7 +1594,22 @@
         const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
         matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: "" });
       } else if (ext === "pdf") {
-        matrix = await pdfToMatrix(file);
+        const linhas = await FC.Fatura.lerLinhas(file);
+        // Fatura de cartão tem tratamento próprio (parcelas, cartão, mês de
+        // competência). Mandar para o importador genérico daria lançamento
+        // sem cartão e sem as parcelas futuras — pior do que não importar.
+        const comoFatura = FC.Fatura.analisar(linhas, today().slice(0, 7));
+        if (comoFatura.itens.length >= 5) {
+          preview.innerHTML = `<div class="alert">
+            📄 Isto parece uma <b>fatura de cartão</b> — reconheci ${comoFatura.itens.length} lançamento(s)
+            ${comoFatura.competencia ? `de <b>${mesLabel(comoFatura.competencia)}</b>` : ""}.
+            <br>Fatura tem lugar próprio: a aba <b>Cartões</b> lê as parcelas, lança as futuras e
+            atualiza o valor do mês em vez de somar de novo.
+            <div style="margin-top:12px"><button class="btn" data-action="ir-cartoes">Ir para Cartões</button></div>
+          </div>`;
+          return;
+        }
+        matrix = pdfLinhasParaMatriz(linhas);
       } else {
         throw new Error("Formato não suportado. Use OFX, CSV, Excel (.xlsx) ou PDF.");
       }
@@ -1478,6 +1655,11 @@
         if (act === "new-account") openModal("account");
         if (act === "close-modal") closeModal();
         if (act === "save-modal") saveModal();
+        if (act === "ir-cartoes") {
+          goto("cards");
+          const box = $("#faturaBox");
+          if (box) box.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
       }
       const ed = e.target.closest("[data-edit]");
       if (ed) openModal(ed.dataset.edit, ed.dataset.id);
@@ -1498,6 +1680,21 @@
     });
     modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
     $("#csvFile").addEventListener("change", (e) => { if (e.target.files[0]) handleImportFile(e.target.files[0]); });
+
+    // Fatura do cartão em PDF
+    const fatFile = $("#fatFile");
+    if (fatFile) fatFile.addEventListener("change", (e) => { if (e.target.files[0]) handleFaturaFile(e.target.files[0]); });
+    // Trocar cartão ou competência refaz a prévia com o PDF já lido — sem
+    // isso a tela mostraria datas de uma competência e gravaria outra.
+    const refazPrevia = () => {
+      if (!faturaLida) return;
+      const card = Store.allSync("cards").find((c) => c.id === $("#fatCard").value);
+      if (card) renderFaturaPreview(faturaLida.res, card);
+    };
+    const fatCard = $("#fatCard");
+    if (fatCard) fatCard.addEventListener("change", refazPrevia);
+    const fatMes = $("#fatMes");
+    if (fatMes) fatMes.addEventListener("change", refazPrevia);
     const dt = $("#downloadTemplate");
     if (dt) dt.addEventListener("click", downloadTemplateCSV);
     const eye = $("#toggleBalance");

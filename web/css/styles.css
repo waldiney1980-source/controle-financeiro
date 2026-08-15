@@ -509,3 +509,9 @@ input[type=file]::file-selector-button:hover{background:rgba(255,255,255,.1)}
   padding:6px 10px;border-radius:8px;font-size:12px;font-weight:700;font-family:inherit;
 }
 .fc-user-out:hover{background:rgba(251,113,133,.2)}
+
+/* ---------------- Importação de fatura ---------------- */
+/* Parcela futura fica mais apagada: ela é projeção, não gasto do mês. */
+.muted-row{opacity:.72}
+.muted-row td{font-style:italic}
+#faturaBox input[type=file]{margin-top:10px}
