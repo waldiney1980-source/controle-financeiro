@@ -162,6 +162,10 @@ típico** (a média dos meses já lançados), com meta de seis meses e o prazo e
 pelo aporte mensal. Registrar um aporte soma na aplicação e, se você quiser, lança a
 saída no mês, que é o que mantém a sobra honesta.
 
+A linha verde da renda no gráfico acompanha o mês, em degraus, porque a renda pode
+mudar de um mês para o outro. Uma linha reta com o valor de um mês só dizia "renda 30k"
+enquanto a tabela ao lado mostrava 29.500 no mês seguinte.
+
 A receita funciona igual: lançada como **entra todo mês**, ela se repete sozinha para
 a frente e entra na previsão; lançada como **só desta vez** (13º, aluguel recebido, um
 extra), vale só naquele mês. Quem tem apenas salário fixo pode continuar escrevendo um

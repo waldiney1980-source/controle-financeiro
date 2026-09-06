@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v56";
+  const APP_VERSION = "v57";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -1079,7 +1079,10 @@
     $$(".cenarios button").forEach((b) => b.classList.toggle("on", b.dataset.cenario === cenario));
     const serie = serieFutura(cenario);
     const outra = serieFutura(cenario === "ritmo" ? "sem-novas" : "ritmo");
-    const r = renda();
+    // A renda muda de mês para mês (13º, aluguel recebido, um extra), então
+    // aqui ela serve só para saber SE existe receita informada. Cada mês usa
+    // a sua, tanto na sobra quanto na linha do gráfico.
+    const r = renda(serie[0].ym);
     const wrap = $("#grafico");
 
     if (!serie.some((m) => m.total > 0)) {
@@ -1180,11 +1183,21 @@
       if (r > 0) base += `<text x="${cx.toFixed(1)}" y="${H - 14}" text-anchor="middle" font-size="10" font-weight="800" fill="${sobra < 0 ? "#d92d54" : "#0f9d58"}">${sobra < 0 ? "−" : "+"}${curto(sobra)}</text>`;
     });
 
+    // A linha da renda acompanha o mês: uma linha reta com a renda de um mês
+    // só dizia "renda 30k" enquanto a tabela mostrava 29.500 no mês ao lado.
     let linhaRenda = "";
-    if (r > 0) {
-      linhaRenda = `<line x1="${padL}" x2="${W - padR}" y1="${y(r).toFixed(1)}" y2="${y(r).toFixed(1)}"
-        stroke="#0f9d58" stroke-width="2" stroke-dasharray="6 4"/>
-        <text x="${W - padR}" y="${(y(r) - 6).toFixed(1)}" text-anchor="end" font-size="9.5" font-weight="700" fill="#0f9d58">renda ${curto(r)}</text>`;
+    const rendas = serie.map((m) => renda(m.ym));
+    if (rendas.some((v) => v > 0)) {
+      let d = "";
+      rendas.forEach((v, i) => {
+        const x0 = padL + step * i, x1 = x0 + step;
+        d += `${i === 0 ? "M" : "L"}${x0.toFixed(1)} ${y(v).toFixed(1)} L${x1.toFixed(1)} ${y(v).toFixed(1)} `;
+      });
+      const varia = rendas.some((v) => Math.abs(v - rendas[0]) > 0.5);
+      linhaRenda = `<path d="${d.trim()}" fill="none" stroke="#0f9d58" stroke-width="2" stroke-dasharray="6 4"/>
+        <text x="${W - padR}" y="${(y(rendas[rendas.length - 1]) - 6).toFixed(1)}" text-anchor="end"
+          font-size="9.5" font-weight="700" fill="#0f9d58">renda ${
+            varia ? "mês a mês" : curto(rendas[0])}</text>`;
     }
 
     wrap.innerHTML = `
