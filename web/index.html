@@ -8,10 +8,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>FinControl</title>
-<link rel="manifest" href="manifest.webmanifest?v=45">
+<link rel="manifest" href="manifest.webmanifest?v=46">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
 <link rel="icon" href="assets/icons/icon-192.png" type="image/png">
-<link rel="stylesheet" href="css/app.css?v=45">
+<link rel="stylesheet" href="css/app.css?v=46">
 </head>
 <body>
 
@@ -104,6 +104,13 @@
     </div>
   </section>
 
+  <!-- ================= ECONOMIA ================= -->
+  <section id="tela-economia" class="hidden">
+    <div class="meses" id="mesesEcon"></div>
+    <div class="dash" id="econTopo"></div>
+    <div id="econLista"></div>
+  </section>
+
   <!-- ================= FUTURO ================= -->
   <section id="tela-futuro" class="hidden">
     <div class="dash" id="dashKpis"></div>
@@ -145,6 +152,8 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 2.8h7l4 4v14.4h-11z"/><path d="M13.5 2.8v4h4"/><path d="M9.2 12.4h5.6M9.2 16h5.6"/></svg>Lançamentos</button>
   <button data-tela="conta">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 7.4h17.6v11.4H3.2z"/><path d="M3.2 11h17.6"/><path d="M6.6 15.2h3.2"/></svg>Conta</button>
+  <button data-tela="economia">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.6" cy="6.4" r="2.6"/><circle cx="6.6" cy="17.6" r="2.6"/><path d="M8.8 8.2 19.4 19.2M8.8 15.8 19.4 4.8"/></svg>Economia</button>
   <button data-tela="futuro">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 20.6h17.2"/><rect x="5.2" y="11" width="3.6" height="6.4" rx="1"/><rect x="10.2" y="6.4" width="3.6" height="11" rx="1"/><rect x="15.2" y="14" width="3.6" height="3.4" rx="1"/></svg>Futuro</button>
 </nav>
@@ -163,13 +172,13 @@
 
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="js/config.js?v=45"></script>
-<script src="js/supabaseClient.js?v=45"></script>
-<script src="js/auth.js?v=45"></script>
-<script src="js/store.js?v=45"></script>
-<script src="js/bills.js?v=45"></script>
-<script src="js/fatura.js?v=45"></script>
-<script src="js/migrar.js?v=45"></script>
-<script src="js/ui.js?v=45"></script>
+<script src="js/config.js?v=46"></script>
+<script src="js/supabaseClient.js?v=46"></script>
+<script src="js/auth.js?v=46"></script>
+<script src="js/store.js?v=46"></script>
+<script src="js/bills.js?v=46"></script>
+<script src="js/fatura.js?v=46"></script>
+<script src="js/migrar.js?v=46"></script>
+<script src="js/ui.js?v=46"></script>
 </body>
 </html>

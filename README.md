@@ -79,6 +79,7 @@ controle-financeiro/
 | **Mês** | Quanto sobra, quanto cabe por dia, para onde o dinheiro vai e as contas a pagar (com marcar pago). |
 | **Lançamentos** | Tudo do mês numa lista só — fatura, parcelas, contas e o que foi digitado. É onde se lança um gasto e se importa a fatura, em PDF, em .txt ou colando o texto. |
 | **Conta** | O que entra e o que sai sem passar no cartão: receitas (avulsas ou todo mês), despesas fora da fatura e as contas a pagar, com o saldo do mês. |
+| **Economia** | Onde dá para cortar, calculado dos seus próprios lançamentos: cobrança repetida na fatura, assinatura em dobro, o peso das assinaturas por ano, corrida de aplicativo e comida por app, onde o dinheiro foi e quando as parcelas aliviam. |
 | **Futuro** | Dash de previsão: quanto já está comprometido em 12 meses, qual mês aperta mais, quanto ainda falta de parcelas, a tabela mês a mês, o gráfico e quando cada parcela acaba. |
 
 A fatura entra de três jeitos, em **Lançamentos → Importar**:
@@ -106,6 +107,10 @@ A folha de lançamento abre com os dois grupos à mostra, **Cartão** e **Despes
 vez de um menu que esconde a segunda opção: é a primeira decisão do lançamento, e o
 rodapé da folha explica o que cada grupo significa. Cartão vai para a fatura; Despesa
 sai da conta por boleto, PIX, débito ou dinheiro, e aparece na aba Conta.
+
+Na tela Mês, cada linha de "Para onde vai" abre e mostra os lançamentos que formam
+aquele número, com as mesmas regras que somam o total. É como se confere se a conta
+fecha, e foi assim que apareceu a assinatura contada duas vezes descrita abaixo.
 
 Ao lançar um gasto dá para dizer o que ele faz nos meses seguintes:
 

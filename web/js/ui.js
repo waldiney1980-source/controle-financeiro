@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v45";
+  const APP_VERSION = "v46";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -57,6 +57,7 @@
   let cenario = "sem-novas";
   let busca = "";
   let verTudo = false;
+  const abertos = new Set();   // grupos de "Para onde vai" abertos na tela Mês
 
   // ---------- Leituras do cofre ----------
   const ehCartao = (t) => !!t.card_id || t.forma === "cartao";
@@ -149,7 +150,7 @@
     const ativo = mesAtivo();
     const html = ms.length < 2 ? "" : ms.map((m) =>
       `<button class="mes${m === ativo ? " on" : ""}" data-mes="${m}">${mesLabel(m)}</button>`).join("");
-    ["#mesesMes", "#mesesLanc", "#mesesConta"].forEach((sel) => {
+    ["#mesesMes", "#mesesLanc", "#mesesConta", "#mesesEcon"].forEach((sel) => {
       const el = $(sel);
       if (!el) return;
       el.innerHTML = html;
@@ -236,7 +237,12 @@
     const out = [];
     const chave = (t) => t.tipo + "|" + chaveTxt(t.descricao);
     const reais = new Set();
+    // Cartões cuja fatura DAQUELE mês já foi importada.
+    const comFatura = new Set();
     (tx || []).forEach((t) => {
+      if (t.fatura_id && String(t.fatura_id).split(":")[1] === ym) {
+        comFatura.add(String(t.fatura_id).split(":")[0]);
+      }
       if (String(t.data || "").slice(0, 7) !== ym) return;
       out.push({ ...t, repetido: false });
       reais.add(chave(t));
@@ -245,6 +251,12 @@
     (tx || []).forEach((t) => {
       const m = String(t.data || "").slice(0, 7);
       if (!m || m >= ym || t.recorrencia !== "mensal") return;
+      // Chegou a fatura do mês para este cartão? Então ela é a verdade, e
+      // repetir a assinatura do mês passado conta a mesma coisa duas vezes.
+      // O nome muda de uma fatura para a outra ("ICATUSEGUROS*Icat" numa,
+      // "ICATU SEGUROS RIO DE JANEIR BR" na outra), então casar pelo texto
+      // não bastava: Icatu e HDI entravam em dobro.
+      if (t.card_id && comFatura.has(t.card_id)) return;
       const k = chave(t);
       if (reais.has(k)) return;
       if (!cands[k] || String(t.data) > String(cands[k].data)) cands[k] = t;
@@ -350,6 +362,39 @@
     return { valor: 0, ym: ym0 };
   }
 
+  // Os lançamentos por trás de cada fatia. As regras são as MESMAS de
+  // fatias(), senão a lista aberta não fecharia com o número da linha.
+  function itensDoGrupo(ym, k) {
+    const tx = Store.allSync("transactions");
+    const noMes = (t) => String(t.data || "").slice(0, 7) === ym;
+    const arruma = (l) => l.map((t) => ({
+      desc: t.descricao, valor: +t.valor || 0, data: t.data,
+      tag: t.parcela ? "parcela " + t.parcela
+        : t.repetido ? "repetida deste mês em diante"
+        : t.recorrencia === "mensal" ? "todo mês"
+        : t.estorno ? "estorno" : ""
+    })).sort((a, b) => Math.abs(b.valor) - Math.abs(a.valor));
+
+    if (k === "parcelas") {
+      return arruma(tx.filter((t) => t.tipo === "despesa" && ehCartao(t) && t.parcela && noMes(t)));
+    }
+    if (k === "recorrentes") {
+      return arruma(ocorrenciasMensais(tx, ym).filter((t) =>
+        t.tipo === "despesa" && ehCartao(t) && t.recorrencia === "mensal" && !t.parcela));
+    }
+    if (k === "variavel") {
+      return arruma(tx.filter((t) => t.tipo === "despesa" && ehCartao(t) && noMes(t)
+        && !t.parcela && t.recorrencia !== "mensal"));
+    }
+    // fora do cartão: contas a pagar e o que foi digitado
+    return foraDoMes(ym).map((l) => ({
+      desc: l.descricao, valor: l.valor, data: l.data,
+      tag: l.col === "bills" ? (l.paga ? "conta paga" : "conta a pagar")
+        : l.repetido ? "repetida deste mês em diante"
+        : l.recorrencia === "mensal" ? "todo mês" : ""
+    })).sort((a, b) => Math.abs(b.valor) - Math.abs(a.valor));
+  }
+
   function serieFutura(cen) {
     const ym0 = mesAtivo();
     const base = fatias(ym0, null);
@@ -384,21 +429,15 @@
   // ---------- Telas ----------
   function render() {
     const t = tela;
-    ["mes", "lancamentos", "conta", "futuro"].forEach((k) =>
+    ["mes", "lancamentos", "conta", "economia", "futuro"].forEach((k) =>
       $("#tela-" + k).classList.toggle("hidden", k !== t));
     $$("#abas button").forEach((b) => b.classList.toggle("on", b.dataset.tela === t));
     const ym = mesAtivo();
     const titulos = {
       mes: [mesNome(ym), "Quanto sobra e o que ainda falta pagar"],
       lancamentos: ["Lançamentos", "Tudo o que entrou em " + mesLabel(ym)],
-      receita: [
-      { n: "descricao", l: "De onde veio", t: "text", req: true },
-      { n: "valor", l: "Valor (R$)", t: "number", req: true },
-      { n: "data", l: "Quando entrou", t: "date", v: () => hoje() },
-      { n: "repete", l: "E nos meses seguintes?", t: "select",
-        o: [{ v: "mensal", t: "Entra todo mês" }, { v: "nenhuma", t: "Só desta vez" }] }
-    ],
-    conta: ["Conta", "O que entra e o que sai sem passar no cartão"],
+      conta: ["Conta", "O que entra e o que sai sem passar no cartão"],
+      economia: ["Economia", "Onde dá para cortar, olhando os seus gastos"],
       futuro: ["Futuro", "Para onde os próximos meses caminham"]
     };
     $("#topoTit").textContent = titulos[t][0];
@@ -408,6 +447,7 @@
     if (t === "mes") renderMes();
     if (t === "lancamentos") renderLancamentos();
     if (t === "conta") renderConta();
+    if (t === "economia") renderEconomia();
     if (t === "futuro") renderFuturo();
   }
 
@@ -461,19 +501,40 @@
         <p class="dica">${frase}</p>`;
     }
 
-    // Para onde vai
+    // Para onde vai. Cada linha abre e mostra os lançamentos que a formam:
+    // o número sozinho não deixa conferir nada.
     const dentro = [
-      { ic: "💳", nome: "Cartão — gasto livre", v: s.variavel, d: "compras do mês na fatura" },
-      { ic: "📆", nome: "Cartão — parcelas", v: s.parcelas, d: "compras parceladas em andamento" },
-      { ic: "🔁", nome: "Cartão — recorrentes", v: s.recorrentes, d: "assinaturas e mensalidades" },
-      { ic: "🏠", nome: "Fora do cartão", v: s.fixos, d: "boleto, PIX, débito e dinheiro" }
+      { k: "variavel", ic: "💳", nome: "Cartão — gasto livre", v: s.variavel, d: "compras do mês na fatura" },
+      { k: "parcelas", ic: "📆", nome: "Cartão — parcelas", v: s.parcelas, d: "compras parceladas em andamento" },
+      { k: "recorrentes", ic: "🔁", nome: "Cartão — recorrentes", v: s.recorrentes, d: "assinaturas e mensalidades" },
+      { k: "fixos", ic: "🏠", nome: "Fora do cartão", v: s.fixos, d: "boleto, PIX, débito e dinheiro" }
     ];
-    $("#resumoMes").innerHTML = dentro.map((l) => `
-      <div class="linha">
+    const TETO = 12;
+    $("#resumoMes").innerHTML = dentro.map((l) => {
+      const aberto = abertos.has(l.k);
+      const itens = aberto ? itensDoGrupo(s.ym, l.k) : [];
+      const mostra = itens.slice(0, TETO);
+      const resto = itens.length - mostra.length;
+      return `
+      <div class="linha grupo-linha${aberto ? " aberta" : ""}" data-grupo="${l.k}" role="button"
+        tabindex="0" aria-expanded="${aberto}">
         <span class="esq"><span class="ico">${l.ic}</span>
           <span><span class="nome">${l.nome}</span><div class="desc">${l.d}</div></span></span>
-        <b>${money(l.v)}</b>
-      </div>`).join("") + `
+        <span style="display:flex;align-items:center;gap:8px"><b>${money(l.v)}</b>
+          <span class="seta">›</span></span>
+      </div>
+      ${aberto ? `<div class="sublista">${
+        mostra.length ? mostra.map((i) => `
+          <div class="subitem">
+            <span><span class="sn">${esc(nomeBonito(i.desc))}</span>
+              <span class="sd">${i.data ? diaCurto(i.data) : ""}${i.tag ? " · " + i.tag : ""}</span></span>
+            <b class="${i.valor < 0 ? "pos" : ""}">${money(i.valor)}</b>
+          </div>`).join("")
+          : `<div class="subitem vazio-sub">Nada neste grupo em ${mesLabel(s.ym)}.</div>`}
+        ${resto > 0 ? `<div class="subitem mais"><button type="button" class="btn sec mini"
+          data-ir="lancamentos">ver os outros ${resto} na aba Lançamentos</button></div>` : ""}
+      </div>` : ""}`;
+    }).join("") + `
       <div class="linha"><span class="esq"><span class="nome" style="font-weight:800">Total do mês</span></span>
         <b style="font-size:16px">${money(s.total)}</b></div>`;
 
@@ -633,6 +694,184 @@
         : ""}
       ${lista.length ? `<div class="aviso" style="margin-top:12px">
         <b>${money(total)}</b> em ${lista.length} lançamento${lista.length > 1 ? "s" : ""} de ${mesLabel(ym)}.</div>` : ""}`;
+  }
+
+  // ---------- Economia: onde dá para cortar ----------
+  // Tudo aqui sai do que ESTÁ lançado. Nenhuma sugestão é chute de média de
+  // mercado: ou é uma cobrança repetida que dá para contestar, ou é dinheiro
+  // que já saiu e você decide se quer que saia de novo.
+  const PADRAO = {
+    transporte: /uber|\b99\b|99\*|cabify|t[aá]xi|lamsa|veloe|sem parar|conectcar/i,
+    delivery: /ifd\*|ifood|rappi|zedelivery|james ?delivery|delivery/i,
+    streaming: /netflix|spotify|disney|hbo|globoplay|deezer|paramount|youtube ?premium|prime ?video|apple\.?com|kindle/i,
+    academia: /wellhub|gympass|smart ?fit|bodytech|selfit|panobianco|bluefit/i,
+    software: /anthropic|openai|chatgpt|claude|midjourney|canva|notion|github|google ?(one|storage)|microsoft|adobe|dropbox|icloud/i
+  };
+
+  function gastosDoCartao(ym) {
+    return Store.allSync("transactions").filter((t) =>
+      t.tipo === "despesa" && ehCartao(t) && String(t.data || "").slice(0, 7) === ym && !t.estorno);
+  }
+
+  function acharEconomias(ym) {
+    const achados = [];
+    const doMes = gastosDoCartao(ym);
+    const oc = ocorrenciasMensais(Store.allSync("transactions"), ym);
+
+    // 1. A mesma cobrança, no mesmo dia, pelo mesmo valor. É o achado mais
+    // valioso porque não exige abrir mão de nada: ou é erro do banco, ou é
+    // compra feita duas vezes sem querer.
+    const pares = {};
+    doMes.forEach((t) => {
+      const k = [String(t.data_compra || t.data).slice(0, 10), t.descricao.toLowerCase().trim(),
+        (+t.valor || 0).toFixed(2)].join("|");
+      (pares[k] = pares[k] || []).push(t);
+    });
+    const repetidas = Object.values(pares).filter((g) => g.length > 1);
+    if (repetidas.length) {
+      const extra = repetidas.reduce((soma, g) => soma + (g.length - 1) * (+g[0].valor || 0), 0);
+      achados.push({
+        nivel: "alto", valor: extra, uma_vez: true,
+        titulo: repetidas.length === 1 ? "Uma cobrança saiu em dobro" : `${repetidas.length} cobranças saíram em dobro`,
+        texto: "Mesma loja, mesmo dia, mesmo valor. Pode ser compra repetida sem querer ou erro da maquininha. "
+          + "Peça os comprovantes antes do vencimento: o estorno entra na fatura seguinte.",
+        itens: repetidas.map((g) => ({
+          desc: nomeBonito(g[0].descricao),
+          det: `${g.length}× ${money(g[0].valor)} em ${diaCurto(g[0].data_compra || g[0].data)}`,
+          valor: (g.length - 1) * (+g[0].valor || 0)
+        }))
+      });
+    }
+
+    // 2. Dois planos do mesmo lugar valendo ao mesmo tempo.
+    const porCasa = {};
+    oc.filter((t) => t.tipo === "despesa" && ehCartao(t) && t.recorrencia === "mensal" && !t.parcela)
+      .forEach((t) => { const k = chaveTxt(t.descricao); if (k) (porCasa[k] = porCasa[k] || []).push(t); });
+    const dobradas = Object.values(porCasa).filter((g) => g.length > 1);
+    if (dobradas.length) {
+      const solto = dobradas.reduce((soma, g) => {
+        const ord = g.slice().sort((a, b) => (+b.valor || 0) - (+a.valor || 0));
+        return soma + ord.slice(1).reduce((x, t) => x + (+t.valor || 0), 0);
+      }, 0);
+      achados.push({
+        nivel: "alto", valor: solto,
+        titulo: "Assinatura repetida no mesmo lugar",
+        texto: "Duas mensalidades do mesmo serviço estão ativas no mesmo mês. Mantendo só a maior, o resto sai da fatura todo mês.",
+        itens: dobradas.flatMap((g) => g.map((t) => ({
+          desc: nomeBonito(t.descricao), det: "mensal", valor: +t.valor || 0
+        })))
+      });
+    }
+
+    // 3. As assinaturas, do maior para o menor. Cada uma é uma decisão sua.
+    const assinaturas = oc.filter((t) => t.tipo === "despesa" && ehCartao(t)
+      && t.recorrencia === "mensal" && !t.parcela)
+      .sort((a, b) => (+b.valor || 0) - (+a.valor || 0));
+    if (assinaturas.length) {
+      const total = assinaturas.reduce((x, t) => x + (+t.valor || 0), 0);
+      const tres = assinaturas.slice(0, 3).reduce((x, t) => x + (+t.valor || 0), 0);
+      achados.push({
+        nivel: "medio", valor: tres,
+        titulo: "Assinaturas: " + money(total) + " por mês",
+        texto: `São ${money(total * 12)} por ano que saem sem nenhuma decisão sua a cada mês. `
+          + `As três maiores somam ${money(tres)} por mês. `
+          + "Vale abrir uma a uma e perguntar se ainda faz sentido, lembrando que seguro é proteção "
+          + "e streaming é entretenimento: cortar não é a mesma conta nos dois casos. "
+          + "Na aba Futuro dá para desligar o que não se repete mais.",
+        itens: assinaturas.slice(0, 8).map((t) => ({
+          desc: nomeBonito(t.descricao), det: money((+t.valor || 0) * 12) + " por ano", valor: +t.valor || 0
+        }))
+      });
+    }
+
+    // 4. Aplicativo de transporte e comida: muitos valores pequenos que
+    // ninguém soma, e é justamente onde o corte é indolor.
+    [["transporte", "Corrida de aplicativo", "Uber, 99, pedágio e estacionamento"],
+     ["delivery", "Comida por aplicativo", "iFood, Rappi e afins"]].forEach(([chave, titulo, quem]) => {
+      const itens = doMes.filter((t) => PADRAO[chave].test(t.descricao) && !t.parcela);
+      if (itens.length < 3) return;
+      const total = itens.reduce((x, t) => x + (+t.valor || 0), 0);
+      if (total < 100) return;
+      achados.push({
+        nivel: "medio", valor: total / 3,
+        titulo: `${titulo}: ${money(total)} em ${mesLabel(ym)}`,
+        texto: `${itens.length} cobranças (${quem}), média de ${money(total / itens.length)} cada. `
+          + `Cortando um terço, sobram ${money(total / 3)} por mês, ${money(total * 4)} por ano.`,
+        itens: [...itens].sort((a, b) => b.valor - a.valor).slice(0, 6).map((t) => ({
+          desc: nomeBonito(t.descricao), det: diaCurto(t.data_compra || t.data), valor: +t.valor || 0
+        }))
+      });
+    });
+
+    // 5. Onde o dinheiro foi, somando o mesmo lugar. Sem sugestão junto: é
+    // o retrato, e a decisão é de quem olha.
+    const porLugar = {};
+    doMes.filter((t) => !t.parcela && t.recorrencia !== "mensal").forEach((t) => {
+      const k = chaveTxt(t.descricao) || t.descricao;
+      const g = porLugar[k] || (porLugar[k] = { desc: t.descricao, n: 0, total: 0 });
+      g.n++; g.total += +t.valor || 0;
+    });
+    const lugares = Object.values(porLugar).sort((a, b) => b.total - a.total).slice(0, 6);
+    if (lugares.length) {
+      achados.push({
+        nivel: "info", valor: 0,
+        titulo: "Onde o dinheiro foi em " + mesLabel(ym),
+        texto: "Mesmo estabelecimento somado, fora parcelas e assinaturas. Serve para enxergar o hábito, não a compra.",
+        itens: lugares.map((g) => ({ desc: nomeBonito(g.desc), det: `${g.n}× no mês`, valor: g.total }))
+      });
+    }
+
+    // 6. Parcela que acaba é aumento de salário, se não for recontratada.
+    const serie = serieFutura("sem-novas");
+    const hoje0 = serie[0] ? serie[0].parcelas : 0;
+    const alivio = serie.slice(1).map((m) => ({ ym: m.ym, cai: hoje0 - m.parcelas }))
+      .filter((x) => x.cai > 50);
+    if (alivio.length) {
+      const primeiro = alivio[0];
+      achados.push({
+        nivel: "info", valor: 0,
+        titulo: `A partir de ${mesLabel(primeiro.ym)} sobram ${money(primeiro.cai)} das parcelas`,
+        texto: "Parcela que termina só vira dinheiro no bolso se não for substituída por outra compra parcelada. "
+          + "Esse é o momento de guardar, não de trocar de dívida.",
+        itens: alivio.slice(0, 5).map((x) => ({
+          desc: mesLabel(x.ym), det: "parcelas menores que hoje", valor: x.cai
+        }))
+      });
+    }
+
+    return achados.sort((a, b) => (b.valor || 0) - (a.valor || 0));
+  }
+
+  function renderEconomia() {
+    const ym = mesAtivo();
+    const achados = acharEconomias(ym);
+    const porMes = achados.filter((a) => a.valor > 0 && !a.uma_vez).reduce((x, a) => x + a.valor, 0);
+    const deVolta = achados.filter((a) => a.uma_vez).reduce((x, a) => x + a.valor, 0);
+    const r = renda(ym);
+
+    $("#econTopo").innerHTML = achados.length ? `
+      <div class="kpi"><div class="rot">Dá para revisar</div>
+        <div class="val">${money(porMes)}<span style="font-size:15px;font-weight:500"> /mês</span></div>
+        <div class="nota">${money(porMes * 12)} por ano, somando as sugestões abaixo${
+          r > 0 ? ` · ${((porMes / r) * 100).toFixed(0)}% da sua renda` : ""}</div></div>
+      ${deVolta > 0 ? `<div class="kpi"><div class="rot">Para conferir agora</div>
+        <div class="val mal">${money(deVolta)}</div>
+        <div class="nota">cobrança repetida na fatura deste mês</div></div>` : ""}`
+      : "";
+
+    $("#econLista").innerHTML = achados.length ? achados.map((a) => `
+      <div class="grupo">
+        <p class="grupo-tit">${a.nivel === "alto" ? "⚠️ " : a.nivel === "medio" ? "✂️ " : "👁 "}${esc(a.titulo)}</p>
+        <div class="card pad">
+          <p class="dica" style="margin:0 0 12px">${a.texto}</p>
+          ${a.valor > 0 ? `<div class="aviso ${a.nivel === "alto" ? "ruim" : "bom"}" style="margin:0 0 12px">
+            <b>${money(a.valor)}</b> ${a.uma_vez ? "para contestar nesta fatura" : "por mês"}</div>` : ""}
+          <div class="econitens">${a.itens.map((i) => `
+            <div class="subitem"><span><span class="sn">${esc(i.desc)}</span>
+              <span class="sd">${esc(i.det)}</span></span><b>${money(i.valor)}</b></div>`).join("")}</div>
+        </div>
+      </div>`).join("")
+      : `<div class="vazio"><span class="em">✂️</span>Importe a fatura do mês para eu procurar onde dá para cortar.</div>`;
   }
 
   // ---------- Futuro ----------
@@ -1335,6 +1574,14 @@
         return;
       }
 
+      const gp = e.target.closest("[data-grupo]");
+      if (gp) {
+        const k = gp.dataset.grupo;
+        if (abertos.has(k)) abertos.delete(k); else abertos.add(k);
+        renderMes();
+        return;
+      }
+
       const mb = e.target.closest("[data-mes]");
       if (mb) { mesSel = mb.dataset.mes; verTudo = false; render(); return; }
 
@@ -1427,6 +1674,11 @@
       }
     });
 
+    document.body.addEventListener("keydown", (e) => {
+      const gp = e.target.closest && e.target.closest("[data-grupo]");
+      if (gp && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); gp.click(); }
+    });
+
     document.body.addEventListener("input", (e) => {
       if (e.target.id === "busca") {
         busca = e.target.value;
@@ -1446,7 +1698,7 @@
     history.replaceState(null, "", location.pathname + location.search);
     if (alvo === "lancar") { abrirModal("gasto"); return; }
     if (alvo === "receita") { tela = "conta"; render(); abrirModal("receita"); return; }
-    if (["futuro", "lancamentos", "conta", "mes"].indexOf(alvo) >= 0) {
+    if (["futuro", "lancamentos", "conta", "economia", "mes"].indexOf(alvo) >= 0) {
       tela = alvo;
       render();
     }
