@@ -508,6 +508,18 @@ label.btn{box-sizing:border-box;text-align:center}
   .saldo-mini .mini:nth-child(3):last-child{grid-column:auto}
 }
 
+/* ---------- Aviso curto do que acabou de ser lançado ---------- */
+#aviso-flutuante{
+  position:fixed;left:50%;bottom:calc(72px + env(safe-area-inset-bottom,0px));
+  transform:translate(-50%,14px);z-index:80;
+  max-width:min(520px,92vw);padding:12px 16px;border-radius:12px;
+  background:var(--label);color:var(--bg);font-size:14.5px;line-height:1.35;
+  box-shadow:0 8px 24px rgba(0,0,0,.22);
+  opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;
+}
+#aviso-flutuante.on{opacity:1;transform:translate(-50%,0)}
+@media(min-width:1000px){ #aviso-flutuante{bottom:24px;left:calc(50% + 130px)} }
+
 </style>
 </head>
 <body>
@@ -1148,6 +1160,16 @@ FC.Store = (function () {
   function categoryById(id) {
     return allSync("categories").find((c) => c.id === id) || null;
   }
+  // Grava AGORA, sem esperar o meio segundo de folga. Depois de uma ação
+  // sua (lançar, importar, marcar como pago) vale a pena: fechar o app ou
+  // perder o sinal nesse intervalo apagaria o que você acabou de fazer.
+  async function flush() {
+    if (!db) return false;
+    if (online) { clearTimeout(saveTimer); await saveRemoteNow(); return true; }
+    saveLocal();
+    return true;
+  }
+
   async function reset() {
     db = seed();
     try { localStorage.removeItem(KEY); } catch (e) {}
@@ -1156,7 +1178,8 @@ FC.Store = (function () {
     return true;
   }
 
-  return { init, all, allSync, add, update, remove, categoryById, reset, get mode() { return window.FC_MODE; } };
+  return { init, all, allSync, add, update, remove, categoryById, flush, reset,
+    get mode() { return window.FC_MODE; } };
 })();
 </script>
 <script>
@@ -2006,7 +2029,14 @@ FC.Fatura = (function () {
       if (t.card_id !== card_id) return false;
       const mes = String(t.data || "").slice(0, 7);
       if (t.fatura_id === faturaId) return true;
-      if (t.projecao && mes >= competencia) return true;
+      if (t.projecao && mes >= competencia) {
+        // Parcela projetada por uma fatura MAIS NOVA fica de pé: ela sabe
+        // mais do que a fatura antiga que está entrando agora. Sem esta
+        // linha, importar a fatura de agosto depois da de setembro varria as
+        // 131 parcelas que a de setembro tinha lançado para o ano inteiro.
+        const origem = String(t.fatura_id || "").split(":")[1] || "";
+        return !origem || origem <= competencia;
+      }
       return !t.fatura_id && mes === competencia;
     });
   }
@@ -2382,7 +2412,7 @@ FC.Migrar = (function () {
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v48";
+  const APP_VERSION = "v51";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -3609,6 +3639,7 @@ FC.Migrar = (function () {
         await Store.add("transactions", rest);
       }
       await podarFaturas(comp);
+      await Store.flush();
 
       const fut = lancs.filter((l) => l.projecao).length;
       const rec = lancs.filter((l) => l.recorrente).length;
@@ -3918,6 +3949,7 @@ FC.Migrar = (function () {
   }
 
   async function gravarModal() {
+    let aviso = "";
     const d = {};
     $$("#modalForm input,#modalForm select").forEach((i) => { if (i.name) d[i.name] = i.value; });
 
@@ -3937,6 +3969,9 @@ FC.Migrar = (function () {
         base.forma = "manual";
       }
 
+      aviso = `Lançado em <b>${mesLabel(String(data).slice(0, 7))}</b>: ${esc(base.descricao)}, `
+        + `${money(base.valor)}, ${d.onde === "cartao" ? "no cartão" : "fora do cartão"}`
+        + (rep === "mensal" ? ", todo mês" : "") + ".";
       if (rep === "parcelado") {
         // Parcelado vira uma despesa por mês, com fim marcado. As dos meses
         // à frente entram como projeção: contam na previsão e somem se a
@@ -3944,6 +3979,8 @@ FC.Migrar = (function () {
         const n = Math.max(2, Math.min(72, parseInt(d.vezes, 10) || 2));
         const ym0 = data.slice(0, 7);
         const dia = +data.slice(8, 10);
+        aviso = `Lançadas <b>${n} parcelas</b> de ${money(base.valor)}: ${esc(base.descricao)}, `
+          + `a partir de ${mesLabel(String(data).slice(0, 7))}.`;
         for (let k = 1; k <= n; k++) {
           const ym = Bl.ymAdd(ym0, k - 1);
           await Store.add("transactions", {
@@ -3967,6 +4004,8 @@ FC.Migrar = (function () {
         recorrencia: d.repete === "mensal" ? "mensal" : "nenhuma"
       });
       mesSel = String(data).slice(0, 7);
+      aviso = `Receita lançada em <b>${mesLabel(mesSel)}</b>: ${esc(d.descricao.trim())}, `
+        + `${money(parseFloat(d.valor) || 0)}${d.repete === "mensal" ? ", todo mês" : ""}.`;
     } else if (modalTipo === "conta") {
       if (!d.descricao || !d.valor) return alert("Preencha o que é e o valor.");
       const valor = parseFloat(d.valor) || 0;
@@ -3999,10 +4038,16 @@ FC.Migrar = (function () {
           pagas: {}, valores: {}
         });
         mesSel = String(d.vencimento || hoje()).slice(0, 7);
+        aviso = `Conta lançada em <b>${mesLabel(mesSel)}</b>: ${esc(d.descricao.trim())}, `
+          + `${money(valor)}${rec === "mensal" ? ", todo mês" : ""}.`;
       }
     }
+    // Grava agora, sem esperar a folga de meio segundo: fechar o app ou
+    // perder o sinal nesse intervalo apagaria o que você acabou de lançar.
+    await Store.flush();
     fecharModal();
     render();
+    if (aviso) avisar(aviso);
   }
 
   function baixarCopia() {
@@ -4013,6 +4058,21 @@ FC.Migrar = (function () {
     a.download = nome;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+
+  // Confirmação curta do que acabou de ser lançado. Sem ela, uma despesa com
+  // data de outro mês some da tela e parece que não foi gravada.
+  function avisar(texto) {
+    let el = document.getElementById("aviso-flutuante");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "aviso-flutuante";
+      document.body.appendChild(el);
+    }
+    el.innerHTML = texto;
+    el.classList.add("on");
+    clearTimeout(avisar._t);
+    avisar._t = setTimeout(() => el.classList.remove("on"), 4200);
   }
 
   // ---------- Migração do painel antigo ----------
@@ -4094,6 +4154,7 @@ FC.Migrar = (function () {
         const pagas = { ...(b.pagas || {}) };
         if (pagas[ym]) delete pagas[ym]; else pagas[ym] = hoje();
         await Store.update("bills", id, { pagas });
+        await Store.flush();
         render();
         return;
       }
