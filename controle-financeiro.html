@@ -2464,7 +2464,7 @@ FC.Migrar = (function () {
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v58";
+  const APP_VERSION = "v59";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -2505,14 +2505,16 @@ FC.Migrar = (function () {
     return s.charAt(0).toUpperCase() + s.slice(1);
   }
   const diaCurto = (d) => (d ? `${String(d).slice(8, 10)}/${String(d).slice(5, 7)}` : "");
+  // Número curto para o gráfico. Uma casa decimal SEMPRE que ela existe:
+  // arredondar 29.500 para "30k" ao lado de uma tela que diz R$ 29.500,00 é
+  // o tipo de diferença que faz duvidar do app inteiro.
   function curto(v) {
     if (ocultar) return "•••";
     const n = Math.abs(+v || 0);
-    if (n >= 1000) {
-      const k = n / 1000;
-      return (k >= 10 ? Math.round(k) : Math.round(k * 10) / 10).toLocaleString(cfg.LOCALE || "pt-BR") + "k";
-    }
-    return String(Math.round(n));
+    if (n < 1000) return String(Math.round(n));
+    const k = n / 1000;
+    return k.toLocaleString(cfg.LOCALE || "pt-BR",
+      { minimumFractionDigits: 0, maximumFractionDigits: 1 }) + "k";
   }
 
   let tela = "mes";
