@@ -119,7 +119,16 @@ em .txt) foi o caso que guiou o leitor, e ele traz três armadilhas já tratadas
 A folha de lançamento abre com os dois grupos à mostra, **Cartão** e **Despesa**, em
 vez de um menu que esconde a segunda opção: é a primeira decisão do lançamento, e o
 rodapé da folha explica o que cada grupo significa. Cartão vai para a fatura; Despesa
-sai da conta por boleto, PIX, débito ou dinheiro, e aparece na aba Conta.
+sai da conta por boleto, PIX, débito ou dinheiro.
+
+No grupo Despesa vem a segunda pergunta: **ainda vou pagar** ou **já paguei**. A
+primeira vira conta a pagar, com vencimento e a bolinha para marcar; a segunda é
+dinheiro que já saiu. Telefone, energia e internet caem no primeiro caso, e era isso
+que faltava para eles aparecerem onde se procura por eles.
+
+Na tela Mês, o bloco "Fora do cartão" mostra as duas coisas na mesma lista, cada linha
+com o seu ✕. A lista dentro de "Para onde vai" também apaga, que é onde se enxerga a
+despesa lançada em dobro.
 
 Na tela Mês, cada linha de "Para onde vai" abre e mostra os lançamentos que formam
 aquele número, com as mesmas regras que somam o total. É como se confere se a conta

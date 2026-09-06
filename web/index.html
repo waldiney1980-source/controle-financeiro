@@ -8,10 +8,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>FinControl</title>
-<link rel="manifest" href="manifest.webmanifest?v=51">
+<link rel="manifest" href="manifest.webmanifest?v=52">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
 <link rel="icon" href="assets/icons/icon-192.png" type="image/png">
-<link rel="stylesheet" href="css/app.css?v=51">
+<link rel="stylesheet" href="css/app.css?v=52">
 </head>
 <body>
 
@@ -54,10 +54,13 @@
     </div>
 
     <div class="grupo">
-      <p class="grupo-tit">Contas a pagar</p>
+      <p class="grupo-tit">Fora do cartão</p>
       <div class="card"><div id="listaContas"></div></div>
       <div id="contasTotal"></div>
-      <div style="margin-top:12px"><button class="btn sec" data-acao="nova-conta">+ Nova conta</button></div>
+      <div class="btn-linha" style="margin-top:12px">
+        <button class="btn sec" data-acao="nova-conta">+ Nova conta</button>
+        <button class="btn sec" data-acao="nova-despesa-fora">+ Despesa</button>
+      </div>
     </div>
 
   </section>
@@ -175,13 +178,13 @@
 
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="js/config.js?v=51"></script>
-<script src="js/supabaseClient.js?v=51"></script>
-<script src="js/auth.js?v=51"></script>
-<script src="js/store.js?v=51"></script>
-<script src="js/bills.js?v=51"></script>
-<script src="js/fatura.js?v=51"></script>
-<script src="js/migrar.js?v=51"></script>
-<script src="js/ui.js?v=51"></script>
+<script src="js/config.js?v=52"></script>
+<script src="js/supabaseClient.js?v=52"></script>
+<script src="js/auth.js?v=52"></script>
+<script src="js/store.js?v=52"></script>
+<script src="js/bills.js?v=52"></script>
+<script src="js/fatura.js?v=52"></script>
+<script src="js/migrar.js?v=52"></script>
+<script src="js/ui.js?v=52"></script>
 </body>
 </html>
