@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v47";
+  const APP_VERSION = "v48";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -163,13 +163,29 @@
 
   const chaveTxt = (s) => FC.Fatura.chaveSerie(s);
 
+  // Com um cartão só, dizer o nome dele em toda linha é ruído. Com dois ou
+  // mais, é a informação que faltava: de qual cartão saiu cada gasto.
+  function apelidoCartao(card_id) {
+    const cards = Store.allSync("cards");
+    if (cards.length < 2 || !card_id) return "";
+    const c = cards.find((x) => x.id === card_id);
+    if (!c) return "";
+    // "OUROCARD ELO NANQUIM" vira "Elo Nanquim": o que distingue está no fim.
+    const bruto = String(c.nome || "").replace(/^ourocard\s+/i, "").trim() || ("final " + (c.final || ""));
+    const curto = bruto.length > 18 ? bruto.slice(0, 18).trim() : bruto;
+    return curto.toLowerCase().replace(/(^|\s)([a-zà-ú])/g, (m, a, b) => a + b.toUpperCase());
+  }
+
   // ---------- Nome legível ----------
   // A fatura escreve o estabelecimento cru, com cidade, país e código da
   // maquininha grudados: "ICATUSEGUROS*Icat RIO DE JANEIR BR". Aqui isso
   // vira "Icatu Seguros". É só para MOSTRAR — o texto original continua
   // gravado, porque é ele que casa uma fatura com a outra.
   const CIDADES = new RegExp("(" + [
-    "rio de janeir[oa]?", "sao paulo", "s ?paulo", "belo horizonte", "curitiba",
+    // O extrato corta a cidade na largura da coluna: "RIO DE JANEIR",
+    // "RIO DE JANEI", "R. DE JANEIRO". Todas viram a mesma coisa aqui.
+    "r\\.? ?de jan\\w*", "rio de jan\\w*", "sao paulo", "s ?paulo", "sao goncalo",
+    "belo horizonte", "curitiba",
     "curiti", "porto alegre", "brasilia", "salvador", "recife", "fortaleza",
     "barueri", "osasco", "nilopolis", "niteroi", "campinas", "guarulhos",
     "santo andre", "sao bernardo", "duque de caxias", "nova iguacu", "betim",
@@ -367,13 +383,17 @@
   function itensDoGrupo(ym, k) {
     const tx = Store.allSync("transactions");
     const noMes = (t) => String(t.data || "").slice(0, 7) === ym;
-    const arruma = (l) => l.map((t) => ({
-      desc: t.descricao, valor: +t.valor || 0, data: t.data,
-      tag: t.parcela ? "parcela " + t.parcela
+    const arruma = (l) => l.map((t) => {
+      const dono = apelidoCartao(t.card_id);
+      const base = t.parcela ? "parcela " + t.parcela
         : t.repetido ? "repetida deste mês em diante"
         : t.recorrencia === "mensal" ? "todo mês"
-        : t.estorno ? "estorno" : ""
-    })).sort((a, b) => Math.abs(b.valor) - Math.abs(a.valor));
+        : t.estorno ? "estorno" : "";
+      return {
+        desc: t.descricao, valor: +t.valor || 0, data: t.data,
+        tag: [base, dono].filter(Boolean).join(" · ")
+      };
+    }).sort((a, b) => Math.abs(b.valor) - Math.abs(a.valor));
 
     if (k === "parcelas") {
       return arruma(tx.filter((t) => t.tipo === "despesa" && ehCartao(t) && t.parcela && noMes(t)));
@@ -486,7 +506,12 @@
       <button type="button" class="mini" data-ir="lancamentos">
         <span class="mrot">💳 Cartão</span>
         <span class="mval">${money(totalCartao)}</span>
-        <span class="mdet">${fat ? "fatura de " + mesLabel(s.ym) : "sem fatura importada"}</span>
+        <span class="mdet">${(() => {
+          const fs = faturas().filter((f) => f.ym === s.ym);
+          if (!fs.length) return "sem fatura importada";
+          if (fs.length === 1) return "fatura de " + mesLabel(s.ym);
+          return fs.length + " faturas somadas";
+        })()}</span>
       </button>
       <button type="button" class="mini" data-ir="conta">
         <span class="mrot">🏠 Fora do cartão</span>
@@ -669,11 +694,13 @@
     ocorrenciasMensais(Store.allSync("transactions"), ym).forEach((t) => {
       if (t.tipo !== "despesa") return;      // receita tem tela própria, a aba Conta
       const cartao = ehCartao(t);
+      const dono = cartao ? apelidoCartao(t.card_id) : "";
       out.push({
         col: "transactions", id: t.id, desc: t.descricao, valor: +t.valor || 0, data: t.data,
         ico: t.estorno ? "↩️" : t.parcela ? "📆" : cartao ? (t.recorrencia === "mensal" ? "🔁" : "💳") : "💵",
-        tag: t.estorno ? "estorno" : t.parcela ? "parcela " + t.parcela
-          : t.recorrencia === "mensal" ? "todo mês" : cartao ? "cartão" : "fora do cartão",
+        tag: (t.estorno ? "estorno" : t.parcela ? "parcela " + t.parcela
+          : t.recorrencia === "mensal" ? "todo mês" : cartao ? (dono || "cartão") : "fora do cartão")
+          + (dono && (t.estorno || t.parcela || t.recorrencia === "mensal") ? " · " + dono : ""),
         apagavel: !t.repetido && !t.projecao,
         futuro: !!t.projecao
       });
@@ -1108,17 +1135,55 @@
     }
   }
 
+  // Qual cartão recebe esta fatura. O arquivo tem a palavra final: casa pelo
+  // final do número; não achando, cria um cartão com o nome que ele traz. O
+  // menu da folha só manda quando você escolhe um cartão à mão.
+  async function cartaoDaFatura(linhas) {
+    const escolhido = Store.allSync("cards").find((c) => c.id === ($("#fatCard") || {}).value);
+    const id = FC.Fatura.identificarCartao(linhas);
+
+    if (id.final) {
+      const igual = Store.allSync("cards").find((c) => c.final === id.final);
+      if (igual) {
+        // Nome melhor no arquivo do que o cadastrado ("Meu cartão").
+        if (id.nome && igual.nome !== id.nome) {
+          await Store.update("cards", igual.id, { nome: id.nome });
+          return { card: { ...igual, nome: id.nome }, novo: false, renomeado: true };
+        }
+        return { card: igual, novo: false };
+      }
+      // Primeira fatura de um cartão que ainda não existe aqui. O cartão
+      // sem final cadastrado (o "Meu cartão" criado no primeiro lançamento)
+      // adota este final em vez de virar um segundo cadastro.
+      const semFinal = Store.allSync("cards").find((c) => !c.final);
+      if (semFinal && !Store.allSync("transactions").some((t) => t.card_id === semFinal.id && t.fatura_id)) {
+        const nome = id.nome || semFinal.nome;
+        await Store.update("cards", semFinal.id, { final: id.final, nome });
+        return { card: { ...semFinal, final: id.final, nome }, novo: false, renomeado: true };
+      }
+      const criado = await Store.add("cards", {
+        nome: id.nome || ("Cartão " + id.final), final: id.final,
+        dia_fechamento: null, dia_vencimento: null
+      });
+      return { card: criado, novo: true };
+    }
+
+    if (escolhido) return { card: escolhido, novo: false };
+    return { card: await cartaoPadrao(), novo: false };
+  }
+
   async function importarLinhas(linhas) {
     const st = $("#fatStatus");
-    let card = Store.allSync("cards").find((c) => c.id === ($("#fatCard") || {}).value);
-    if (!card) card = await cartaoPadrao();
+    const achado = await cartaoDaFatura(linhas);
+    let card = achado.card;
     {
       if (linhas.length < 3) {
         st.innerHTML = `<div class="aviso ruim">Não achei texto neste arquivo. Se for um PDF escaneado
           (uma foto da fatura), ele não tem texto para ler — use o PDF que o banco gera, ou cole o texto.</div>`;
         return;
       }
-      const res = FC.Fatura.analisar(linhas, ($("#fatMes") || {}).value || hoje().slice(0, 7));
+      const forcado = /^\d{4}-\d{2}$/.test(mesEscolhido) ? mesEscolhido : null;
+      const res = FC.Fatura.analisar(linhas, ($("#fatMes") || {}).value || hoje().slice(0, 7), forcado);
       if (!res.itens.length) {
         st.innerHTML = `<div class="aviso ruim">Li o arquivo mas não reconheci nenhuma compra.
           Cada lançamento precisa começar com a data, como <b>09/08 POSTO SHELL 210,40</b>.</div>`;
@@ -1128,9 +1193,9 @@
       // pelo mês da compra mais recente, importa, e diz qual usou. O campo
       // fica à mostra para corrigir e mandar de novo, se for o caso.
       const campoMes = $("#fatMesCx");
-      if (campoMes) campoMes.classList.toggle("hidden", !!res.competenciaDetectada);
+      if (campoMes) campoMes.classList.remove("hidden");
       const campoMesInput = $("#fatMes");
-      if (campoMesInput && !campoMesInput.value) campoMesInput.value = res.competencia;
+      if (campoMesInput && !mesEscolhido) campoMesInput.value = res.competencia;
       const comp = res.competencia;
       // O dia digitado na folha manda e fica guardado no cartão: quando o
       // arquivo não traz o vencimento, é ele que põe as parcelas no dia certo.
@@ -1147,6 +1212,15 @@
       });
       const soma = lancs.filter((l) => !l.projecao).reduce((s, l) => s + l.valor, 0);
       const bate = res.totalDeclarado != null && Math.abs(res.totalDeclarado - soma) < 0.05;
+
+      // A mesma fatura importada antes no mês errado: mesmo cartão, mesma
+      // soma, mesma quantidade, outra competência. Corrigir o mês tem que
+      // MOVER a fatura, senão ela apareceria duas vezes, em dois meses.
+      const doMes = lancs.filter((l) => !l.projecao);
+      const somaNova = +doMes.reduce((x, l) => x + l.valor, 0).toFixed(2);
+      const gemeas = faturas().filter((f) => f.card_id === card.id && f.ym !== comp
+        && f.qtd === doMes.length && Math.abs(f.total - somaNova) < 0.05);
+      for (const g of gemeas) await apagarFatura(g.id, true);
 
       const apagar = FC.Fatura.substituiveis(Store.allSync("transactions"), card.id, comp);
       const manuais = apagar.filter((t) => !t.fatura_id);
@@ -1169,6 +1243,9 @@
       const fut = lancs.filter((l) => l.projecao).length;
       const rec = lancs.filter((l) => l.recorrente).length;
       const semData = res.competenciaOrigem !== "fatura";
+      const deQuem = `<br>Cartão: <b>${esc(card.nome)}</b>${card.final ? " (final " + card.final + ")" : ""}${
+        achado.novo ? " — cadastrado agora, a partir do próprio arquivo." : ""}${
+        gemeas.length ? `<br>Movi esta mesma fatura de ${gemeas.map((g) => mesLabel(g.ym)).join(", ")} para ${mesLabel(comp)}.` : ""}`;
       st.innerHTML = `<div class="aviso ${semData ? "atencao" : "bom"}">${semData ? "⚠️" : "✅"}
         <b>${mesLabel(comp)}</b> lançada — ${lancs.length - fut} do mês${
         fut ? `, ${fut} parcelas nos meses seguintes` : ""}${rec ? `, ${rec} recorrentes` : ""}.
@@ -1176,9 +1253,12 @@
                : res.totalDeclarado
                  ? `<br>⚠️ Somei ${money(soma)}, a fatura diz ${money(res.totalDeclarado)}. Confira os lançamentos.`
                  : ""}
-        ${semData ? `<br>Não achei o vencimento escrito na fatura, então usei <b>${mesLabel(comp)}</b>,
-          ${res.competenciaOrigem === "compras" ? "o mês da compra mais recente" : "o mês do campo acima"}.
-          Se não for esse, corrija a competência acima e mande de novo.` : ""}</div>`;
+        ${deQuem}
+        ${semData ? `<br>A fatura não diz o vencimento, então usei <b>${mesLabel(comp)}</b>, ${
+          res.competenciaOrigem === "emissao" ? "o mês em que o extrato foi tirado"
+          : res.competenciaOrigem === "compras" ? "o mês da compra mais recente"
+          : "o mês do campo acima"}.
+          Se não for esse, corrija a competência acima e mande o arquivo de novo.` : ""}</div>`;
       const caixa = $("#fatTexto");
       if (caixa) caixa.value = "";
       mesSel = comp;
@@ -1220,6 +1300,10 @@
   // ---------- Folhas (modal) ----------
   let modalTipo = null;
   let modalCtx = null;
+  // O campo de competência é preenchido pelo app quando ele adivinha o mês.
+  // Só o que VOCÊ digita nele manda na importação seguinte, e é isto que
+  // separa uma coisa da outra.
+  let mesEscolhido = "";
   const CAMPOS = {
     gasto: [
       { n: "onde", l: "Onde passou", t: "seg",
@@ -1318,6 +1402,7 @@
     if (tipo === "gasto" && ctx && ctx.onde === "fora") $("#modalTit").textContent = "Lançar despesa";
     $("#modalBtns").classList.toggle("hidden", tipo === "importar");
     if (tipo === "importar") {
+      mesEscolhido = "";
       $("#modalForm").innerHTML = folhaImportarHtml();
       pintarFolhaImportar();
     } else {
@@ -1357,6 +1442,8 @@
       <p class="dica" style="margin:0 0 12px">Mande a fatura em PDF ou em texto: as compras entram no mês do
         vencimento e as parcelas que faltam se espalham sozinhas pelos meses seguintes.</p>
       <div class="campo"><label>Cartão</label><select id="fatCard"></select></div>
+      <p class="dica" style="margin-top:0">O app reconhece o cartão pelo número que vem escrito na fatura e
+        cadastra sozinho quando é um novo. Escolha um acima só para forçar.</p>
       <div class="campo"><label>Dia do vencimento da fatura</label>
         <input type="number" id="fatDia" min="1" max="31" inputmode="numeric" placeholder="ex.: 21"></div>
       <div class="campo hidden" id="fatMesCx"><label>Competência (não achei na fatura)</label>
@@ -1375,6 +1462,9 @@
 
       <p class="grupo-tit" style="margin-top:22px">Faturas já importadas</p>
       <div class="card"><div id="listaFaturas"></div></div>
+
+      <p class="grupo-tit" style="margin-top:22px">Cartões</p>
+      <div class="card"><div id="listaCartoes"></div></div>
 
       <p class="grupo-tit" style="margin-top:22px">Trazer de fora</p>
       <div class="card pad">
@@ -1402,14 +1492,28 @@
     const sel = $("#fatCard");
     if (sel) {
       const atual = sel.value;
-      sel.innerHTML = cards.map((c) => `<option value="${c.id}">${esc(c.nome)}</option>`).join("")
-        || `<option value="">Meu cartão (será criado)</option>`;
+      sel.innerHTML = `<option value="">Detectar pelo arquivo</option>`
+        + cards.map((c) => `<option value="${c.id}">${esc(c.nome)}${
+          c.final ? " (final " + c.final + ")" : ""}</option>`).join("");
       if (atual && cards.some((c) => c.id === atual)) sel.value = atual;
     }
     const dia = $("#fatDia");
     if (dia && !dia.value) {
       const c = cards.find((x) => x.id === (sel ? sel.value : "")) || cards[0];
       if (c && c.dia_vencimento) dia.value = c.dia_vencimento;
+    }
+    const lc = $("#listaCartoes");
+    if (lc) {
+      lc.innerHTML = cards.length ? cards.map((c) => {
+        const qtd = Store.allSync("transactions").filter((t) => t.card_id === c.id).length;
+        return `<div class="linha">
+          <span class="esq"><span class="ico">💳</span>
+            <span><span class="nome">${esc(c.nome)}</span>
+            <div class="desc">${c.final ? "final " + c.final + " · " : ""}${qtd} lançamentos${
+              c.dia_vencimento ? " · vence dia " + c.dia_vencimento : ""}</div></span></span>
+          <button type="button" class="btn perigo mini" data-del-cartao="${c.id}">✕</button>
+        </div>`;
+      }).join("") : `<div class="vazio" style="padding:20px">Nenhum cartão ainda. O primeiro nasce da primeira fatura.</div>`;
     }
     const fs = faturas();
     const lf = $("#listaFaturas");
@@ -1653,6 +1757,18 @@
         return;
       }
 
+      const dc2 = e.target.closest("[data-del-cartao]");
+      if (dc2) {
+        const id = dc2.dataset.delCartao;
+        const alvo = Store.allSync("transactions").filter((t) => t.card_id === id);
+        if (!confirm(`Apagar este cartão e os ${alvo.length} lançamentos dele?`)) return;
+        for (const t of alvo) await Store.remove("transactions", t.id);
+        await Store.remove("cards", id);
+        render();
+        pintarFolhaImportar();
+        return;
+      }
+
       const df = e.target.closest("[data-del-fatura]");
       if (df) { await apagarFatura(df.dataset.delFatura); return; }
 
@@ -1674,6 +1790,7 @@
     });
 
     document.body.addEventListener("change", async (e) => {
+      if (e.target.id === "fatMes") { mesEscolhido = e.target.value || ""; return; }
       if (e.target.id === "fatFile" && e.target.files[0]) { importar(e.target.files[0]); return; }
       if (e.target.id === "migFile" && e.target.files[0]) {
         const texto = await e.target.files[0].text();

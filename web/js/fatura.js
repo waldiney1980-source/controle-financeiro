@@ -157,6 +157,25 @@ FC.Fatura = (function () {
     return null;
   }
 
+  // Fatura ainda aberta ("lançamentos futuros", "próxima fatura") não traz
+  // vencimento, e a última compra pode ser do mês passado: o Elo com compras
+  // até 21/08 é a fatura que vence em setembro. Nesse caso vale a data em que
+  // o extrato foi tirado, que o cabeçalho traz.
+  function competenciaPelaEmissao(linhas) {
+    // O extrato escreve o título espaçado, letra por letra:
+    // "L A N Ç A M E N T O S    F U T U R O S". Aqui isso volta a ser palavra.
+    const texto = linhas.join("\n")
+      .replace(/\b(?:[A-Za-zÀ-ÿ]\s){2,}[A-Za-zÀ-ÿ]\b/g, (m) => m.replace(/\s+/g, ""));
+    if (!/lan[çc]amentos\s*futuros|pr[óo]xima\s*fatura|fatura\s*em\s*aberto/i.test(texto)) return null;
+    for (const l of linhas) {
+      const m = l.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+      if (m && (/\d{2}:\d{2}/.test(l) || /auto[- ]?atendimento|extrato|emiss[ãa]o/i.test(l))) {
+        return m[3] + "-" + pad(+m[2]);
+      }
+    }
+    return null;
+  }
+
   // Última linha de reserva: a competência pelas próprias compras. A fatura
   // que vence em agosto é a que traz compras até agosto, então o mês da
   // compra mais recente acerta o mês na quase totalidade dos casos — e um
@@ -220,6 +239,30 @@ FC.Fatura = (function () {
     }
 
     return { vencimento, competencia, total, linhaVencimento };
+  }
+
+  // ---------- De qual cartão é esta fatura ----------
+  // Sem isso, duas faturas de cartões diferentes caem no mesmo cadastro, e
+  // como importar substitui a competência inteira daquele cartão, a segunda
+  // apagava a primeira. O arquivo diz de quem ele é: o extrato do BB traz
+  // "Nr.Cartão : 6516.****.****.1082" e "Modalidade : OUROCARD ELO NANQUIM".
+  function identificarCartao(linhas) {
+    const texto = (linhas || []).join("\n");
+    let final = null, nome = null, m;
+
+    if ((m = texto.match(/n[ºor]{0,2}\.?\s*cart[ãa]o\s*:?\s*([\d*.\-\s]{6,40})/i))) {
+      const digitos = m[1].match(/\d{4}/g);
+      if (digitos && digitos.length) final = digitos[digitos.length - 1];
+    }
+    if (!final && (m = texto.match(/final\s*(?:do\s*cart[ãa]o\s*)?:?\s*(\d{4})/i))) final = m[1];
+    if (!final && (m = texto.match(/\(cart[ãa]o\s*(\d{4})\)/i))) final = m[1];
+
+    if ((m = texto.match(/modalidade\s*:?\s*([^\n]{3,40})/i))) nome = m[1].trim();
+    if (!nome && (m = texto.match(/\b(ourocard[a-z ]*|elo\b[a-z ]*|visa[a-z ]*|mastercard[a-z ]*|hipercard|american express|amex)\b/i))) {
+      nome = m[1].trim().toUpperCase();
+    }
+    if (nome) nome = nome.replace(/\s{2,}/g, " ").slice(0, 40);
+    return { nome, final };
   }
 
   // ---------- Parcela ----------
@@ -416,15 +459,17 @@ FC.Fatura = (function () {
   }
 
   // ---------- Fatura inteira ----------
-  function analisar(linhas, competenciaPadrao) {
+  function analisar(linhas, competenciaPadrao, forcada) {
     const cab = lerCabecalho(linhas);
     // Cabeçalho de colunas "... Valor R$   Valor US$": diz que o real vem
     // antes do dólar em cada linha.
     const rsAntesDeUs = linhas.some((l) => /valor\s*r\$[\s\S]{0,40}valor\s*us\$/i.test(l));
-    // Ordem: o que está escrito na fatura, o palpite pelas compras, e só
-    // então o que a tela sugeriu.
-    const palpite = cab.competencia ? null : competenciaPelasCompras(linhas);
-    const competencia = cab.competencia || palpite || competenciaPadrao;
+    // Ordem: o mês que VOCÊ escolheu na tela manda em tudo. Depois o que está
+    // escrito na fatura, depois a data em que o extrato foi tirado (fatura
+    // ainda aberta), e só então o mês da compra mais recente.
+    const emissao = (forcada || cab.competencia) ? null : competenciaPelaEmissao(linhas);
+    const palpite = (forcada || cab.competencia || emissao) ? null : competenciaPelasCompras(linhas);
+    const competencia = forcada || cab.competencia || emissao || palpite || competenciaPadrao;
     const itens = [], ignoradas = [];
     let secao = "", portador = "";
     linhas.forEach((l, indice) => {
@@ -466,8 +511,11 @@ FC.Fatura = (function () {
       amostra: linhas.slice(0, 8),
       // Lida = estava escrita na fatura. Senão, `competenciaOrigem` diz de
       // onde veio o palpite, para a tela avisar sem travar a importação.
-      competenciaDetectada: !!cab.competencia,
-      competenciaOrigem: cab.competencia ? "fatura" : (palpite ? "compras" : "tela"),
+      competenciaDetectada: !!(forcada || cab.competencia),
+      competenciaOrigem: forcada ? "escolhida"
+        : cab.competencia ? "fatura"
+        : emissao ? "emissao"
+        : palpite ? "compras" : "tela",
       vencimento: cab.vencimento,
       totalDeclarado: cab.total,
       itens,
@@ -646,7 +694,8 @@ FC.Fatura = (function () {
 
   return {
     lerLinhas, lerArquivo, linhasDeTexto,
-    analisar, analisarTolerante, expandir, acharVencimento, competenciaPelasCompras, substituiveis, manuaisEmRisco, diaVencimento,
+    analisar, analisarTolerante, expandir, acharVencimento, competenciaPelasCompras,
+    competenciaPelaEmissao, identificarCartao, substituiveis, manuaisEmRisco, diaVencimento,
     valorBR, acharParcela, ehRecorrente, chaveSerie, recorrentesConhecidas
   };
 })();

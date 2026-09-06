@@ -92,16 +92,25 @@ Os três passam pelo mesmo leitor: ele acha o vencimento, separa as compras dos
 estornos, reconhece "PARC 08/10" e joga as parcelas que faltam nos meses seguintes.
 O que importa é uma linha por lançamento, começando pela data.
 
+Cada fatura vai para o **seu** cartão: o app lê o número que vem escrito no arquivo
+("Nr.Cartão : 6516.****.****.1082") e casa pelo final; se for um cartão novo, cadastra
+sozinho com o nome da modalidade ("OUROCARD ELO NANQUIM"). Sem isso, duas faturas de
+cartões diferentes caíam no mesmo cadastro e, como importar substitui a competência
+inteira daquele cartão, a segunda apagava a primeira. Com dois ou mais cartões, o nome
+aparece ao lado de cada lançamento, e as somas do mês juntam todos.
+
 O extrato do Banco do Brasil (Auto-Atendimento → Fatura do Cartão de Crédito, salvo
 em .txt) foi o caso que guiou o leitor, e ele traz três armadilhas já tratadas:
 
 - vem em **ISO-8859-1**, não em UTF-8 (lido como UTF-8, todo acento vira lixo);
 - imprime **duas colunas de valor**, "Valor R$" e depois "Valor US$", quase sempre
   zerada — pegar o último número da linha zerava a fatura inteira;
-- **não escreve o vencimento** em lugar nenhum. Nesse caso o app não pergunta: usa o
-  mês da compra mais recente, importa, e avisa qual mês usou, para você corrigir se
-  for outro. O dia do vencimento fica num campo da própria folha e é guardado no
-  cartão, para as parcelas caírem no dia certo.
+- **não escreve o vencimento** em lugar nenhum. Nesse caso o app não pergunta: para a
+  fatura ainda aberta usa o mês em que o extrato foi tirado, senão o mês da compra mais
+  recente, importa, e avisa qual mês usou. O campo **Competência** da folha corrige, e
+  o que você escolhe ali manda em tudo; reimportar com o mês certo **move** a fatura,
+  em vez de deixar duas. O dia do vencimento fica num campo da própria folha e é
+  guardado no cartão, para as parcelas caírem no dia certo.
 
 A folha de lançamento abre com os dois grupos à mostra, **Cartão** e **Despesa**, em
 vez de um menu que esconde a segunda opção: é a primeira decisão do lançamento, e o
