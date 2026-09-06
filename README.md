@@ -162,6 +162,9 @@ típico** (a média dos meses já lançados), com meta de seis meses e o prazo e
 pelo aporte mensal. Registrar um aporte soma na aplicação e, se você quiser, lança a
 saída no mês, que é o que mantém a sobra honesta.
 
+Os números do gráfico levam uma casa decimal quando ela existe (29,5k, não 30k):
+arredondar ao lado de uma tela que diz R$ 29.500,00 faz duvidar do app inteiro.
+
 A linha verde da renda no gráfico acompanha o mês, em degraus, porque a renda pode
 mudar de um mês para o outro. Uma linha reta com o valor de um mês só dizia "renda 30k"
 enquanto a tabela ao lado mostrava 29.500 no mês seguinte.
