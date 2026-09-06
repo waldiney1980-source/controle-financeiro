@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v48";
+  const APP_VERSION = "v51";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -1239,6 +1239,7 @@
         await Store.add("transactions", rest);
       }
       await podarFaturas(comp);
+      await Store.flush();
 
       const fut = lancs.filter((l) => l.projecao).length;
       const rec = lancs.filter((l) => l.recorrente).length;
@@ -1548,6 +1549,7 @@
   }
 
   async function gravarModal() {
+    let aviso = "";
     const d = {};
     $$("#modalForm input,#modalForm select").forEach((i) => { if (i.name) d[i.name] = i.value; });
 
@@ -1567,6 +1569,9 @@
         base.forma = "manual";
       }
 
+      aviso = `Lançado em <b>${mesLabel(String(data).slice(0, 7))}</b>: ${esc(base.descricao)}, `
+        + `${money(base.valor)}, ${d.onde === "cartao" ? "no cartão" : "fora do cartão"}`
+        + (rep === "mensal" ? ", todo mês" : "") + ".";
       if (rep === "parcelado") {
         // Parcelado vira uma despesa por mês, com fim marcado. As dos meses
         // à frente entram como projeção: contam na previsão e somem se a
@@ -1574,6 +1579,8 @@
         const n = Math.max(2, Math.min(72, parseInt(d.vezes, 10) || 2));
         const ym0 = data.slice(0, 7);
         const dia = +data.slice(8, 10);
+        aviso = `Lançadas <b>${n} parcelas</b> de ${money(base.valor)}: ${esc(base.descricao)}, `
+          + `a partir de ${mesLabel(String(data).slice(0, 7))}.`;
         for (let k = 1; k <= n; k++) {
           const ym = Bl.ymAdd(ym0, k - 1);
           await Store.add("transactions", {
@@ -1597,6 +1604,8 @@
         recorrencia: d.repete === "mensal" ? "mensal" : "nenhuma"
       });
       mesSel = String(data).slice(0, 7);
+      aviso = `Receita lançada em <b>${mesLabel(mesSel)}</b>: ${esc(d.descricao.trim())}, `
+        + `${money(parseFloat(d.valor) || 0)}${d.repete === "mensal" ? ", todo mês" : ""}.`;
     } else if (modalTipo === "conta") {
       if (!d.descricao || !d.valor) return alert("Preencha o que é e o valor.");
       const valor = parseFloat(d.valor) || 0;
@@ -1629,10 +1638,16 @@
           pagas: {}, valores: {}
         });
         mesSel = String(d.vencimento || hoje()).slice(0, 7);
+        aviso = `Conta lançada em <b>${mesLabel(mesSel)}</b>: ${esc(d.descricao.trim())}, `
+          + `${money(valor)}${rec === "mensal" ? ", todo mês" : ""}.`;
       }
     }
+    // Grava agora, sem esperar a folga de meio segundo: fechar o app ou
+    // perder o sinal nesse intervalo apagaria o que você acabou de lançar.
+    await Store.flush();
     fecharModal();
     render();
+    if (aviso) avisar(aviso);
   }
 
   function baixarCopia() {
@@ -1643,6 +1658,21 @@
     a.download = nome;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+
+  // Confirmação curta do que acabou de ser lançado. Sem ela, uma despesa com
+  // data de outro mês some da tela e parece que não foi gravada.
+  function avisar(texto) {
+    let el = document.getElementById("aviso-flutuante");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "aviso-flutuante";
+      document.body.appendChild(el);
+    }
+    el.innerHTML = texto;
+    el.classList.add("on");
+    clearTimeout(avisar._t);
+    avisar._t = setTimeout(() => el.classList.remove("on"), 4200);
   }
 
   // ---------- Migração do painel antigo ----------
@@ -1724,6 +1754,7 @@
         const pagas = { ...(b.pagas || {}) };
         if (pagas[ym]) delete pagas[ym]; else pagas[ym] = hoje();
         await Store.update("bills", id, { pagas });
+        await Store.flush();
         render();
         return;
       }

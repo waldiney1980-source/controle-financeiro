@@ -493,3 +493,15 @@ label.btn{box-sizing:border-box;text-align:center}
   .saldo-mini{grid-template-columns:1fr}
   .saldo-mini .mini:nth-child(3):last-child{grid-column:auto}
 }
+
+/* ---------- Aviso curto do que acabou de ser lançado ---------- */
+#aviso-flutuante{
+  position:fixed;left:50%;bottom:calc(72px + env(safe-area-inset-bottom,0px));
+  transform:translate(-50%,14px);z-index:80;
+  max-width:min(520px,92vw);padding:12px 16px;border-radius:12px;
+  background:var(--label);color:var(--bg);font-size:14.5px;line-height:1.35;
+  box-shadow:0 8px 24px rgba(0,0,0,.22);
+  opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;
+}
+#aviso-flutuante.on{opacity:1;transform:translate(-50%,0)}
+@media(min-width:1000px){ #aviso-flutuante{bottom:24px;left:calc(50% + 130px)} }

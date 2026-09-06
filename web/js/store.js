@@ -249,6 +249,16 @@ FC.Store = (function () {
   function categoryById(id) {
     return allSync("categories").find((c) => c.id === id) || null;
   }
+  // Grava AGORA, sem esperar o meio segundo de folga. Depois de uma ação
+  // sua (lançar, importar, marcar como pago) vale a pena: fechar o app ou
+  // perder o sinal nesse intervalo apagaria o que você acabou de fazer.
+  async function flush() {
+    if (!db) return false;
+    if (online) { clearTimeout(saveTimer); await saveRemoteNow(); return true; }
+    saveLocal();
+    return true;
+  }
+
   async function reset() {
     db = seed();
     try { localStorage.removeItem(KEY); } catch (e) {}
@@ -257,5 +267,6 @@ FC.Store = (function () {
     return true;
   }
 
-  return { init, all, allSync, add, update, remove, categoryById, reset, get mode() { return window.FC_MODE; } };
+  return { init, all, allSync, add, update, remove, categoryById, flush, reset,
+    get mode() { return window.FC_MODE; } };
 })();

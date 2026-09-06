@@ -681,7 +681,14 @@ FC.Fatura = (function () {
       if (t.card_id !== card_id) return false;
       const mes = String(t.data || "").slice(0, 7);
       if (t.fatura_id === faturaId) return true;
-      if (t.projecao && mes >= competencia) return true;
+      if (t.projecao && mes >= competencia) {
+        // Parcela projetada por uma fatura MAIS NOVA fica de pé: ela sabe
+        // mais do que a fatura antiga que está entrando agora. Sem esta
+        // linha, importar a fatura de agosto depois da de setembro varria as
+        // 131 parcelas que a de setembro tinha lançado para o ano inteiro.
+        const origem = String(t.fatura_id || "").split(":")[1] || "";
+        return !origem || origem <= competencia;
+      }
       return !t.fatura_id && mes === competencia;
     });
   }

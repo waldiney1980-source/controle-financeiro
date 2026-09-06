@@ -92,6 +92,10 @@ Os três passam pelo mesmo leitor: ele acha o vencimento, separa as compras dos
 estornos, reconhece "PARC 08/10" e joga as parcelas que faltam nos meses seguintes.
 O que importa é uma linha por lançamento, começando pela data.
 
+Importar uma fatura substitui aquela competência daquele cartão, mas **não** mexe nas
+parcelas projetadas por uma fatura mais nova: mandar a fatura de agosto depois da de
+setembro não pode varrer as parcelas que setembro já lançou para o ano inteiro.
+
 Cada fatura vai para o **seu** cartão: o app lê o número que vem escrito no arquivo
 ("Nr.Cartão : 6516.****.****.1082") e casa pelo final; se for um cartão novo, cadastra
 sozinho com o nome da modalidade ("OUROCARD ELO NANQUIM"). Sem isso, duas faturas de
@@ -126,6 +130,12 @@ Ao lançar um gasto dá para dizer o que ele faz nos meses seguintes:
 - **Não se repete** — fica só naquele mês.
 - **Volta todo mês, sem prazo** — assinatura, mensalidade, academia. Repete sozinho para a frente e entra na previsão.
 - **É parcelado, tem fim** — informe em quantas vezes e o valor de cada parcela. O app cria uma despesa por mês até a última, dentro ou fora do cartão.
+
+Todo lançamento é gravado na hora, sem a folga de meio segundo que o app usava para
+juntar gravações: fechar a tela logo depois de lançar apagaria o que acabou de ser
+feito. E cada lançamento responde com um aviso curto dizendo o que entrou **e em que
+mês** — é o que denuncia a despesa que foi para outubro quando você achava que era
+setembro.
 
 A receita funciona igual: lançada como **entra todo mês**, ela se repete sozinha para
 a frente e entra na previsão; lançada como **só desta vez** (13º, aluguel recebido, um
