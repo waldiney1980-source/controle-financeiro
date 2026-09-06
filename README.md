@@ -192,9 +192,11 @@ internet (o service worker guarda uma cópia dos arquivos).
 Segurando o ícone na tela de início aparecem dois atalhos: **Lançar gasto**, que já
 abre a folha de lançamento, e **Futuro**, que abre a previsão.
 
-Depois de publicar uma versão nova, o app se atualiza sozinho na próxima abertura.
-Se quiser forçar, toque na etiqueta da versão (`v42`) no alto da tela: ela limpa o
-cache e recarrega.
+Ao abrir, o app pergunta ao servidor qual é a versão publicada. Sendo outra, ele limpa
+o cache, descarta o service worker antigo e recarrega uma vez, avisando na tela. Isso
+existe porque dava para ficar dias olhando uma versão guardada sem perceber, achando
+que um defeito não tinha sido corrigido. A etiqueta da versão no alto continua servindo
+para forçar na mão.
 
 ### 3.3 Arquivo único, para abrir com dois cliques
 
