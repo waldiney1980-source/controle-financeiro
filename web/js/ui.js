@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v52";
+  const APP_VERSION = "v53";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -454,7 +454,7 @@
   // ---------- Telas ----------
   function render() {
     const t = tela;
-    ["mes", "lancamentos", "conta", "economia", "futuro"].forEach((k) =>
+    ["mes", "lancamentos", "conta", "investir", "economia", "futuro"].forEach((k) =>
       $("#tela-" + k).classList.toggle("hidden", k !== t));
     $$("#abas button").forEach((b) => b.classList.toggle("on", b.dataset.tela === t));
     const ym = mesAtivo();
@@ -462,6 +462,7 @@
       mes: [mesNome(ym), "Quanto sobra e o que ainda falta pagar"],
       lancamentos: ["Lançamentos", "Tudo o que entrou em " + mesLabel(ym)],
       conta: ["Conta", "O que entra e o que sai sem passar no cartão"],
+      investir: ["Investimentos", "O que você já guardou e quanto isso segura"],
       economia: ["Economia", "Onde dá para cortar, olhando os seus gastos"],
       futuro: ["Futuro", "Para onde os próximos meses caminham"]
     };
@@ -472,6 +473,7 @@
     if (t === "mes") renderMes();
     if (t === "lancamentos") renderLancamentos();
     if (t === "conta") renderConta();
+    if (t === "investir") renderInvestir();
     if (t === "economia") renderEconomia();
     if (t === "futuro") renderFuturo();
   }
@@ -755,6 +757,102 @@
         : ""}
       ${lista.length ? `<div class="aviso" style="margin-top:12px">
         <b>${money(total)}</b> em ${lista.length} lançamento${lista.length > 1 ? "s" : ""} de ${mesLabel(ym)}.</div>` : ""}`;
+  }
+
+  // ---------- Investimentos ----------
+  // O app não fala com corretora nenhuma: aqui você diz o que tem e quanto
+  // vale hoje. O valor de tudo isto é o cruzamento com o resto — quantos
+  // meses da SUA vida esse dinheiro cobre se a renda parar.
+  const TIPOS_INV = ["Reserva/CDB", "Tesouro Direto", "Poupança", "Fundo",
+    "Ações/FII", "Previdência", "Cripto", "Outro"];
+
+  function investimentos() {
+    return Store.allSync("investments").slice()
+      .sort((a, b) => (+b.atual || 0) - (+a.atual || 0));
+  }
+
+  // Gasto de um mês médio: a média dos meses que já têm lançamento de
+  // verdade, sem contar os que só têm projeção de parcela.
+  function gastoMensalTipico() {
+    const meses = mesesDisponiveis().filter((m) => m <= hoje().slice(0, 7));
+    const totais = meses.map((m) => fatias(m, null).total).filter((v) => v > 0);
+    if (!totais.length) return 0;
+    return totais.reduce((a, b) => a + b, 0) / totais.length;
+  }
+
+  function renderInvestir() {
+    const lista = investimentos();
+    const atual = lista.reduce((t, i) => t + (+i.atual || 0), 0);
+    const aplicado = lista.reduce((t, i) => t + (+i.aplicado || 0), 0);
+    const ganho = atual - aplicado;
+    const aportes = lista.reduce((t, i) => t + (+i.aporte || 0), 0);
+    const gasto = gastoMensalTipico();
+    const meses = gasto > 0 ? atual / gasto : 0;
+
+    $("#invKpis").innerHTML = `
+      <div class="kpi"><div class="rot">Guardado hoje</div>
+        <div class="val">${money(atual)}</div>
+        <div class="nota">${lista.length
+          ? `${lista.length} ${lista.length === 1 ? "aplicação" : "aplicações"}${
+              aportes > 0 ? ` · ${money(aportes)} por mês de aporte` : ""}`
+          : "nada cadastrado ainda"}</div></div>
+      <div class="kpi"><div class="rot">Rendimento</div>
+        <div class="val ${ganho < 0 ? "mal" : ""}">${ganho >= 0 ? "+" : "−"}${money(Math.abs(ganho))}</div>
+        <div class="nota">${aplicado > 0
+          ? `sobre ${money(aplicado)} aplicados · ${(ganho / aplicado * 100).toFixed(1).replace(".", ",")}%`
+          : "informe quanto você aplicou para ver o ganho"}</div></div>
+      <div class="kpi"><div class="rot">Segura você por</div>
+        <div class="val">${gasto > 0 ? meses.toFixed(1).replace(".", ",") + " meses" : "—"}</div>
+        <div class="nota">${gasto > 0
+          ? `com o gasto de um mês típico, ${money(gasto)}`
+          : "lance um mês de gastos para eu calcular"}</div></div>`;
+
+    $("#listaInvest").innerHTML = lista.length ? lista.map((i) => {
+      const g = (+i.atual || 0) - (+i.aplicado || 0);
+      return `<div class="linha">
+        <span class="esq"><span class="ico">📈</span>
+          <span class="tocavel" data-edit-inv="${i.id}">
+            <span class="nome">${esc(i.nome)}</span>
+            <div class="desc">${esc(i.tipo || "Outro")}${
+              i.aporte > 0 ? " · " + money(i.aporte) + " por mês" : ""}${
+              i.aplicado > 0 ? " · aplicado " + money(i.aplicado) : ""}</div></span></span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <span style="text-align:right">
+            <b style="display:block;color:var(--label)">${money(i.atual)}</b>
+            ${i.aplicado > 0 ? `<span class="sd ${g >= 0 ? "pos" : "neg"}" style="font-size:12.5px">${
+              g >= 0 ? "+" : "−"}${money(Math.abs(g))}</span>` : ""}
+          </span>
+          <button type="button" class="btn perigo mini" data-del-inv="${i.id}">✕</button>
+        </span>
+      </div>`;
+    }).join("")
+      : `<div class="vazio"><span class="em">📈</span>Nada cadastrado. Some a poupança, o CDB, o Tesouro,
+         o que estiver guardado, e o app diz quantos meses isso cobre.</div>`;
+
+    $("#notaInvest").textContent = lista.length
+      ? "Toque no nome para atualizar o valor de hoje. O saldo não se atualiza sozinho: quem sabe quanto rendeu é o seu banco."
+      : "";
+
+    // Reserva de emergência
+    const alvoMeses = 6;
+    const alvo = gasto * alvoMeses;
+    const pct = alvo > 0 ? Math.min(atual / alvo, 1) * 100 : 0;
+    const nivel = meses >= 6 ? "bom" : meses >= 3 ? "atencao" : "ruim";
+    $("#invReserva").innerHTML = gasto <= 0
+      ? `<div class="vazio" style="padding:18px">Sem gastos lançados ainda, não dá para dizer quanto é a sua reserva.</div>`
+      : `
+      <span class="selo ${nivel}">${meses >= 6 ? "Reserva formada" : meses >= 3 ? "Meio caminho" : "Começando"}</span>
+      <div class="linha" style="padding-top:0">
+        <span class="nome">Meta de ${alvoMeses} meses</span><b>${money(alvo)}</b>
+      </div>
+      <div class="barra"><i class="${nivel}" style="width:${pct.toFixed(1)}%"></i></div>
+      <p class="dica">${meses >= 6
+        ? `Você tem ${meses.toFixed(1).replace(".", ",")} meses guardados. O que passa disso pode ir para
+           investimento de prazo mais longo, que rende mais e demora a virar dinheiro.`
+        : `Faltam ${money(Math.max(0, alvo - atual))} para seis meses de gasto. ${
+            aportes > 0
+              ? `No ritmo de ${money(aportes)} por mês, dá em ${Math.ceil((alvo - atual) / aportes)} meses.`
+              : "Cadastre um aporte mensal na aplicação para eu calcular o prazo."}`}</p>`;
   }
 
   // ---------- Economia: onde dá para cortar ----------
@@ -1340,6 +1438,23 @@
       { n: "repete", l: "E nos meses seguintes?", t: "select",
         o: [{ v: "mensal", t: "Entra todo mês" }, { v: "nenhuma", t: "Só desta vez" }] }
     ],
+    aplicacao: [
+      { n: "nome", l: "Onde está guardado", t: "text", req: true },
+      { n: "tipo", l: "Tipo", t: "select", o: [] },
+      { n: "atual", l: "Quanto vale hoje (R$)", t: "number", req: true },
+      { n: "aplicado", l: "Quanto você colocou (R$)", t: "number",
+        dica: "Serve para o app calcular o rendimento. Se não souber, deixe igual ao valor de hoje." },
+      { n: "aporte", l: "Aporte por mês (R$)", t: "number",
+        dica: "Quanto você guarda ali todo mês. Usado para estimar em quanto tempo a reserva fecha." }
+    ],
+    aporte: [
+      { n: "investimento", l: "Para onde vai", t: "select", o: [] },
+      { n: "valor", l: "Valor do aporte (R$)", t: "number", req: true },
+      { n: "data", l: "Quando", t: "date", v: () => hoje() },
+      { n: "sai", l: "E no caixa do mês", t: "select",
+        o: [{ v: "sim", t: "Lançar como saída (o dinheiro sai da conta)" },
+            { v: "nao", t: "Não lançar, só somar no investimento" }] }
+    ],
     conta: [
       { n: "descricao", l: "O que é", t: "text", req: true },
       { n: "valor", l: "Valor (R$)", t: "number", req: true },
@@ -1349,7 +1464,8 @@
     ]
   };
   const TITULOS = { gasto: "Lançar gasto", receita: "Lançar receita",
-    conta: "Nova conta a pagar", importar: "Importar" };
+    conta: "Nova conta a pagar", aplicacao: "Nova aplicação",
+    aporte: "Registrar aporte", importar: "Importar" };
 
   function campoHtml(c) {
     const dica = c.dica ? `<p class="dica" data-de="${c.n}">${c.dica}</p>` : "";
@@ -1424,7 +1540,9 @@
   function abrirModal(tipo, ctx) {
     modalTipo = tipo;
     modalCtx = ctx || null;
-    $("#modalTit").textContent = (ctx && ctx.id ? "Editar conta" : TITULOS[tipo]) || "Novo";
+    $("#modalTit").textContent = (ctx && ctx.id
+      ? (tipo === "aplicacao" ? "Editar aplicação" : "Editar conta")
+      : TITULOS[tipo]) || "Novo";
     if (tipo === "gasto" && ctx && ctx.onde === "fora") $("#modalTit").textContent = "Lançar despesa";
     $("#modalBtns").classList.toggle("hidden", tipo === "importar");
     if (tipo === "importar") {
@@ -1433,6 +1551,15 @@
       pintarFolhaImportar();
     } else {
       let campos = CAMPOS[tipo];
+      if (tipo === "aplicacao") {
+        campos = campos.map((c) => c.n === "tipo"
+          ? { ...c, o: TIPOS_INV.map((t2) => ({ v: t2, t: t2 })) } : c);
+      }
+      if (tipo === "aporte") {
+        const invs = investimentos();
+        campos = campos.map((c) => c.n === "investimento"
+          ? { ...c, o: invs.map((i) => ({ v: i.id, t: i.nome })) } : c);
+      }
       // Editando uma conta que se repete: o valor da luz muda todo mês, então
       // o app pergunta se a mudança é só deste mês ou de todos.
       if (tipo === "conta" && ctx && ctx.id && ctx.recorrencia === "mensal") {
@@ -1659,6 +1786,42 @@
       mesSel = String(data).slice(0, 7);
       aviso = `Receita lançada em <b>${mesLabel(mesSel)}</b>: ${esc(d.descricao.trim())}, `
         + `${money(parseFloat(d.valor) || 0)}${d.repete === "mensal" ? ", todo mês" : ""}.`;
+    } else if (modalTipo === "aplicacao") {
+      if (!d.nome || !d.atual) return alert("Preencha o nome e quanto vale hoje.");
+      const dados = {
+        nome: d.nome.trim(), tipo: d.tipo || "Outro",
+        atual: parseFloat(d.atual) || 0,
+        aplicado: parseFloat(d.aplicado) || parseFloat(d.atual) || 0,
+        aporte: parseFloat(d.aporte) || 0
+      };
+      if (modalCtx && modalCtx.id) {
+        await Store.update("investments", modalCtx.id, dados);
+        aviso = `Atualizado: ${esc(dados.nome)}, agora vale ${money(dados.atual)}.`;
+      } else {
+        await Store.add("investments", dados);
+        aviso = `Aplicação cadastrada: ${esc(dados.nome)}, ${money(dados.atual)}.`;
+      }
+    } else if (modalTipo === "aporte") {
+      const inv = Store.allSync("investments").find((x) => x.id === d.investimento);
+      const valor = parseFloat(d.valor) || 0;
+      if (!inv) return alert("Cadastre uma aplicação antes de registrar o aporte.");
+      if (!valor) return alert("Informe o valor do aporte.");
+      const data = d.data || hoje();
+      await Store.update("investments", inv.id, {
+        atual: (+inv.atual || 0) + valor,
+        aplicado: (+inv.aplicado || 0) + valor
+      });
+      // Aporte é dinheiro que sai do mês para virar patrimônio. Lançar a
+      // saída é o que mantém a sobra do mês honesta.
+      if ((d.sai || "sim") === "sim") {
+        await Store.add("transactions", {
+          descricao: "Aporte em " + inv.nome, valor, tipo: "despesa", forma: "manual",
+          data, category_id: null, recorrencia: "nenhuma", aporte: true
+        });
+      }
+      mesSel = String(data).slice(0, 7);
+      aviso = `Aporte de ${money(valor)} em ${esc(inv.nome)}`
+        + ((d.sai || "sim") === "sim" ? `, lançado como saída de ${mesLabel(mesSel)}.` : ", sem mexer no caixa.");
     } else if (modalTipo === "conta") {
       if (!d.descricao || !d.valor) return alert("Preencha o que é e o valor.");
       const valor = parseFloat(d.valor) || 0;
@@ -1777,6 +1940,8 @@
         if (a === "nova-receita") abrirModal("receita");
         if (a === "nova-despesa-fora") abrirModal("gasto", { onde: "fora" });
         if (a === "nova-conta") abrirModal("conta");
+        if (a === "nova-aplicacao") abrirModal("aplicacao");
+        if (a === "novo-aporte") abrirModal("aporte");
         if (a === "importar") abrirModal("importar");
         if (a === "ver-tudo") { verTudo = true; render(); }
         if (a === "fechar") fecharModal();
@@ -1837,6 +2002,24 @@
         const [col, id] = dl.dataset.delLanc.split(":");
         if (!confirm("Apagar este lançamento?")) return;
         await Store.remove(col, id);
+        await Store.flush();
+        render();
+        return;
+      }
+
+      const ei = e.target.closest("[data-edit-inv]");
+      if (ei) {
+        const inv = Store.allSync("investments").find((x) => x.id === ei.dataset.editInv);
+        if (inv) abrirModal("aplicacao", { id: inv.id, valores: {
+          nome: inv.nome, tipo: inv.tipo, atual: inv.atual, aplicado: inv.aplicado, aporte: inv.aporte
+        } });
+        return;
+      }
+
+      const di = e.target.closest("[data-del-inv]");
+      if (di) {
+        if (!confirm("Apagar esta aplicação? Os aportes já lançados no mês ficam.")) return;
+        await Store.remove("investments", di.dataset.delInv);
         await Store.flush();
         render();
         return;
@@ -1923,7 +2106,7 @@
     history.replaceState(null, "", location.pathname + location.search);
     if (alvo === "lancar") { abrirModal("gasto"); return; }
     if (alvo === "receita") { tela = "conta"; render(); abrirModal("receita"); return; }
-    if (["futuro", "lancamentos", "conta", "economia", "mes"].indexOf(alvo) >= 0) {
+    if (["futuro", "lancamentos", "conta", "investir", "economia", "mes"].indexOf(alvo) >= 0) {
       tela = alvo;
       render();
     }

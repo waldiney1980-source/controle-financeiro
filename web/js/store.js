@@ -44,12 +44,13 @@ FC.Store = (function () {
       { nome: "Cartão de crédito", tipo: "despesa", cor: "#64748b", icone: "💳" },
       { nome: "Outras despesas", tipo: "despesa", cor: "#6b7280", icone: "📦" }
     ].map((c) => ({ id: uid(), parent_id: null, ...c }));
-    return { categories: cats, accounts: [], cards: [], transactions: [], budgets: [], goals: [], bills: [], catrules: [], prefs: [] };
+    return { categories: cats, accounts: [], cards: [], transactions: [], budgets: [], goals: [],
+      bills: [], catrules: [], prefs: [], investments: [] };
   }
 
   // "prefs" guarda uma linha só, com as preferências da casa (hoje: a renda
   // mensal informada). Fica no mesmo cofre, então vale para a família toda.
-  const COLLECTIONS = ["categories", "accounts", "cards", "transactions", "budgets", "goals", "bills", "catrules", "prefs"];
+  const COLLECTIONS = ["categories", "accounts", "cards", "transactions", "budgets", "goals", "bills", "catrules", "prefs", "investments"];
 
   function ensureShape(d) {
     d = d || {};

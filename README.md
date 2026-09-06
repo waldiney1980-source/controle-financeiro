@@ -79,6 +79,7 @@ controle-financeiro/
 | **Mês** | Quanto sobra e quanto cabe por dia, com o mês em três números ao lado (cartão, fora do cartão e o que ainda falta pagar), para onde o dinheiro vai e as contas a pagar (com marcar pago). |
 | **Lançamentos** | Tudo do mês numa lista só — fatura, parcelas, contas e o que foi digitado. É onde se lança um gasto e se importa a fatura, em PDF, em .txt ou colando o texto. |
 | **Conta** | O que entra e o que sai sem passar no cartão: receitas (avulsas ou todo mês), despesas fora da fatura e as contas a pagar, com o saldo do mês. |
+| **Investir** | O que você já guardou: aplicações com valor de hoje e valor aplicado, rendimento, aporte mensal e, o número que importa, quantos meses do seu gasto essa reserva cobre. |
 | **Economia** | Onde dá para cortar, calculado dos seus próprios lançamentos: cobrança repetida na fatura, assinatura em dobro, o peso das assinaturas por ano, corrida de aplicativo e comida por app, onde o dinheiro foi e quando as parcelas aliviam. |
 | **Futuro** | Dash de previsão: quanto já está comprometido em 12 meses, qual mês aperta mais, quanto ainda falta de parcelas, a tabela mês a mês, o gráfico e quando cada parcela acaba. |
 
@@ -145,6 +146,12 @@ juntar gravações: fechar a tela logo depois de lançar apagaria o que acabou d
 feito. E cada lançamento responde com um aviso curto dizendo o que entrou **e em que
 mês** — é o que denuncia a despesa que foi para outubro quando você achava que era
 setembro.
+
+A aba Investir não fala com corretora nenhuma: você diz o que tem e quanto vale hoje,
+e o app cruza com o resto. A reserva de emergência é medida em **meses do seu gasto
+típico** (a média dos meses já lançados), com meta de seis meses e o prazo estimado
+pelo aporte mensal. Registrar um aporte soma na aplicação e, se você quiser, lança a
+saída no mês, que é o que mantém a sobra honesta.
 
 A receita funciona igual: lançada como **entra todo mês**, ela se repete sozinha para
 a frente e entra na previsão; lançada como **só desta vez** (13º, aluguel recebido, um

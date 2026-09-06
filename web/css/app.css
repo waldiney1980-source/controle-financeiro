@@ -505,3 +505,11 @@ label.btn{box-sizing:border-box;text-align:center}
 }
 #aviso-flutuante.on{opacity:1;transform:translate(-50%,0)}
 @media(min-width:1000px){ #aviso-flutuante{bottom:24px;left:calc(50% + 130px)} }
+
+/* Seis abas: o rótulo encolhe mais um pouco no celular estreito. */
+@media(max-width:420px){
+  .abas button{font-size:9.5px}
+  .abas button svg{width:21px;height:21px}
+}
+.sd.pos{color:var(--verde)}
+.sd.neg{color:var(--vermelho)}
