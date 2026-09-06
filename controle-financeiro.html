@@ -563,10 +563,13 @@ label.btn{box-sizing:border-box;text-align:center}
     </div>
 
     <div class="grupo">
-      <p class="grupo-tit">Contas a pagar</p>
+      <p class="grupo-tit">Fora do cartão</p>
       <div class="card"><div id="listaContas"></div></div>
       <div id="contasTotal"></div>
-      <div style="margin-top:12px"><button class="btn sec" data-acao="nova-conta">+ Nova conta</button></div>
+      <div class="btn-linha" style="margin-top:12px">
+        <button class="btn sec" data-acao="nova-conta">+ Nova conta</button>
+        <button class="btn sec" data-acao="nova-despesa-fora">+ Despesa</button>
+      </div>
     </div>
 
   </section>
@@ -2412,7 +2415,7 @@ FC.Migrar = (function () {
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v51";
+  const APP_VERSION = "v52";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -2790,7 +2793,11 @@ FC.Migrar = (function () {
         : t.recorrencia === "mensal" ? "todo mês"
         : t.estorno ? "estorno" : "";
       return {
-        desc: t.descricao, valor: +t.valor || 0, data: t.data,
+        id: t.id, col: "transactions", apagavel: !t.repetido,
+        // Nome digitado por você fica como está: a limpeza serve para o texto
+        // cru da fatura, e passar "Feira do mês" por ela tirava o acento.
+        desc: t.fatura_id ? nomeBonito(t.descricao) : t.descricao,
+        valor: +t.valor || 0, data: t.data,
         tag: [base, dono].filter(Boolean).join(" · ")
       };
     }).sort((a, b) => Math.abs(b.valor) - Math.abs(a.valor));
@@ -2808,10 +2815,11 @@ FC.Migrar = (function () {
     }
     // fora do cartão: contas a pagar e o que foi digitado
     return foraDoMes(ym).map((l) => ({
+      id: l.id, col: l.col, apagavel: !l.repetido,
       desc: l.descricao, valor: l.valor, data: l.data,
       tag: l.col === "bills" ? (l.paga ? "conta paga" : "conta a pagar")
         : l.repetido ? "repetida deste mês em diante"
-        : l.recorrencia === "mensal" ? "todo mês" : ""
+        : l.recorrencia === "mensal" ? "todo mês" : "já lançado"
     })).sort((a, b) => Math.abs(b.valor) - Math.abs(a.valor));
   }
 
@@ -2974,9 +2982,13 @@ FC.Migrar = (function () {
       ${aberto ? `<div class="sublista">${
         mostra.length ? mostra.map((i) => `
           <div class="subitem">
-            <span><span class="sn">${esc(nomeBonito(i.desc))}</span>
+            <span><span class="sn">${esc(i.desc)}</span>
               <span class="sd">${i.data ? diaCurto(i.data) : ""}${i.tag ? " · " + i.tag : ""}</span></span>
-            <b class="${i.valor < 0 ? "pos" : ""}">${money(i.valor)}</b>
+            <span style="display:flex;align-items:center;gap:6px">
+              <b class="${i.valor < 0 ? "pos" : ""}">${money(i.valor)}</b>
+              ${i.apagavel ? `<button type="button" class="btn perigo mini"
+                data-del-lanc="${i.col}:${i.id}" aria-label="Apagar">✕</button>` : ""}
+            </span>
           </div>`).join("")
           : `<div class="subitem vazio-sub">Nada neste grupo em ${mesLabel(s.ym)}.</div>`}
         ${resto > 0 ? `<div class="subitem mais"><button type="button" class="btn sec mini"
@@ -2988,29 +3000,47 @@ FC.Migrar = (function () {
 
     // Contas a pagar
     const contas = contasDoMes(s.ym);
-    $("#listaContas").innerHTML = contas.length ? contas.map((c) => `
-      <div class="linha${c.paga ? " paga" : ""}">
-        <span class="esq">
-          <button class="check${c.paga ? " on" : ""}" data-pagar="${c.id}:${c.ym}" aria-label="Marcar como paga">✓</button>
-          <span class="tocavel" data-edit-conta="${c.id}:${c.ym}"><span class="nome">${esc(c.descricao)}</span>
-          <div class="desc">${c.paga ? "pago em " + diaCurto(c.pagaEm) : "vence " + diaCurto(c.venc)}${
-            c.recorrencia === "mensal" ? " · todo mês" : ""}</div></span></span>
-        <span style="display:flex;align-items:center;gap:8px">
-          <b>${money(c.valor)}</b>
-          <button class="btn perigo mini" data-del-conta="${c.id}">✕</button>
-        </span>
-      </div>`).join("")
-      : `<div class="vazio" style="padding:22px"><span class="em">🧾</span>Nenhuma conta cadastrada em ${mesLabel(s.ym)}.</div>`;
+    $("#listaContas").innerHTML = htmlListaFora(s.ym);
 
     const aberto = contas.filter((c) => !c.paga).reduce((t, c) => t + c.valor, 0);
-    const pago = contas.filter((c) => c.paga).reduce((t, c) => t + c.valor, 0);
+    const jaSaiu = s.fixos - aberto;
     const atrasadas = contas.filter((c) => !c.paga && c.venc && c.venc < hoje());
-    $("#contasTotal").innerHTML = contas.length ? `
+    $("#contasTotal").innerHTML = foraDoMes(s.ym).length ? `
       <div class="aviso${atrasadas.length ? " ruim" : ""}" style="margin-top:12px">
-        <b>${money(aberto)}</b> ainda a pagar · ${money(pago)} já pago${
+        <b>${money(aberto)}</b> ainda a pagar · ${money(jaSaiu)} já saiu${
         atrasadas.length ? `<br>⚠️ ${atrasadas.length} vencida${atrasadas.length > 1 ? "s" : ""}.` : ""}
       </div>` : "";
 
+  }
+
+  // A mesma lista serve a tela Mês e a aba Conta: conta a pagar (com a
+  // bolinha) e despesa já lançada (o que você digitou e já saiu). Eram duas
+  // listas diferentes, e a despesa lançada somava no total sem aparecer em
+  // lugar nenhum, o que parecia perda de lançamento.
+  function htmlListaFora(ym) {
+    const fora = foraDoMes(ym);
+    if (!fora.length) {
+      return `<div class="vazio" style="padding:22px"><span class="em">🧾</span>Nada fora do cartão em ${mesLabel(ym)}.</div>`;
+    }
+    return fora.map((l) => {
+      const conta = l.col === "bills";
+      return `<div class="linha${conta && l.paga ? " paga" : ""}">
+        <span class="esq">
+          ${conta
+            ? `<button type="button" class="check${l.paga ? " on" : ""}" data-pagar="${l.id}:${ym}" aria-label="Marcar como paga">✓</button>`
+            : `<span class="ico">💵</span>`}
+          <span${conta ? ` class="tocavel" data-edit-conta="${l.id}:${ym}"` : ""}>
+            <span class="nome">${esc(l.descricao)}</span>
+            <div class="desc">${conta
+              ? (l.paga ? "pago em " + diaCurto(l.pagaEm) : "vence " + diaCurto(l.data))
+              : (l.data ? diaCurto(l.data) + " · " : "") + "já lançado"}${
+              l.recorrencia === "mensal" ? " · todo mês" : ""}</div></span></span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <b>${money(l.valor)}</b>
+          ${l.repetido ? "" : `<button type="button" class="btn perigo mini" data-del-lanc="${l.col}:${l.id}">✕</button>`}
+        </span>
+      </div>`;
+    }).join("");
   }
 
   // ---------- Conta: o que entra e o que sai sem passar no cartão ----------
@@ -3051,25 +3081,7 @@ FC.Migrar = (function () {
       : `<div class="vazio" style="padding:22px"><span class="em">💰</span>Nenhuma receita lançada em ${mesLabel(ym)}.
          ${fixa > 0 ? `Vale a receita fixa de ${money(fixa)}.` : ""}</div>`;
 
-    $("#listaFora").innerHTML = fora.length ? fora.map((l) => {
-      const conta = l.col === "bills";
-      return `<div class="linha${conta && l.paga ? " paga" : ""}">
-        <span class="esq">
-          ${conta
-            ? `<button type="button" class="check${l.paga ? " on" : ""}" data-pagar="${l.id}:${ym}" aria-label="Marcar como paga">✓</button>`
-            : `<span class="ico">💵</span>`}
-          <span${conta ? ` class="tocavel" data-edit-conta="${l.id}:${ym}"` : ""}>
-            <span class="nome">${esc(l.descricao)}</span>
-            <div class="desc">${conta
-              ? (l.paga ? "pago em " + diaCurto(l.pagaEm) : "vence " + diaCurto(l.data))
-              : diaCurto(l.data)}${l.recorrencia === "mensal" ? " · todo mês" : ""}</div></span></span>
-        <span style="display:flex;align-items:center;gap:8px">
-          <b>${money(l.valor)}</b>
-          ${l.repetido ? "" : `<button type="button" class="btn perigo mini" data-del-lanc="${l.col}:${l.id}">✕</button>`}
-        </span>
-      </div>`;
-    }).join("")
-      : `<div class="vazio" style="padding:22px"><span class="em">🧾</span>Nada fora do cartão em ${mesLabel(ym)}.</div>`;
+    $("#listaFora").innerHTML = htmlListaFora(ym);
 
     $("#notaFora").textContent = fora.length
       ? "Contas a pagar têm a bolinha para marcar como pagas; toque no nome para corrigir valor ou vencimento."
@@ -3096,7 +3108,9 @@ FC.Migrar = (function () {
       const cartao = ehCartao(t);
       const dono = cartao ? apelidoCartao(t.card_id) : "";
       out.push({
-        col: "transactions", id: t.id, desc: t.descricao, valor: +t.valor || 0, data: t.data,
+        col: "transactions", id: t.id,
+        desc: t.fatura_id ? nomeBonito(t.descricao) : t.descricao,
+        valor: +t.valor || 0, data: t.data,
         ico: t.estorno ? "↩️" : t.parcela ? "📆" : cartao ? (t.recorrencia === "mensal" ? "🔁" : "💳") : "💵",
         tag: (t.estorno ? "estorno" : t.parcela ? "parcela " + t.parcela
           : t.recorrencia === "mensal" ? "todo mês" : cartao ? (dono || "cartão") : "fora do cartão")
@@ -3120,7 +3134,7 @@ FC.Migrar = (function () {
     const q = busca.trim().toLowerCase();
     if (q) {
       lista = lista.filter((l) =>
-        (l.desc + " " + nomeBonito(l.desc)).toLowerCase().indexOf(q) >= 0);
+        l.desc.toLowerCase().indexOf(q) >= 0);
     }
     const total = lista.reduce((s, l) => s + l.valor, 0);
     const mostrar = verTudo ? lista : lista.slice(0, LISTA_INICIAL);
@@ -3128,7 +3142,7 @@ FC.Migrar = (function () {
     $("#listaLanc").innerHTML = mostrar.length ? mostrar.map((l) => `
       <div class="linha">
         <span class="esq"><span class="ico">${l.ico}</span>
-          <span><span class="nome">${esc(nomeBonito(l.desc))}</span>
+          <span><span class="nome">${esc(l.desc)}</span>
           <div class="desc">${l.data ? diaCurto(l.data) + " · " : ""}${l.tag}</div></span></span>
         <span style="display:flex;align-items:center;gap:8px">
           <b class="${l.valor < 0 ? "pos" : ""}">${money(l.valor)}</b>
@@ -3712,6 +3726,9 @@ FC.Migrar = (function () {
       { n: "descricao", l: "O que foi", t: "text", req: true },
       { n: "valor", l: "Valor (R$)", t: "number", req: true },
       { n: "data", l: "Quando", t: "date", v: () => hoje() },
+      { n: "situacao", l: "E esta despesa", t: "select", esconde: true,
+        o: [{ v: "pagar", t: "Ainda vou pagar (vira conta a pagar)" },
+            { v: "pago", t: "Já paguei, o dinheiro saiu" }] },
       { n: "repete", l: "E nos meses seguintes?", t: "select",
         o: [{ v: "nenhuma", t: "Não se repete, foi só desta vez" },
             { v: "mensal", t: "Volta todo mês, sem prazo" },
@@ -3775,14 +3792,25 @@ FC.Migrar = (function () {
   function pintaAjudaGasto() {
     const campo = $('#modalForm [name="onde"]');
     const ajuda = $("#ajudaGasto");
-    if (!campo || !ajuda) return;
-    ajuda.innerHTML = campo.value === "cartao"
+    if (!campo) return;
+    const fora = campo.value === "fora";
+    // "Ainda vou pagar" só faz sentido fora do cartão: o que passa no cartão
+    // é cobrado na fatura, e quem paga a fatura é você, uma vez só.
+    const cxSit = $('#modalForm [data-campo="situacao"]');
+    if (cxSit) cxSit.hidden = !fora;
+    if (!ajuda) return;
+    const sit = $('#modalForm [name="situacao"]');
+    ajuda.innerHTML = !fora
       ? "Compra que vai <b>cair na fatura</b> do cartão. Some ao gasto do mês do vencimento."
-      : "O que sai da conta sem passar no cartão: <b>boleto, PIX, débito ou dinheiro</b>. Aparece também na aba Conta.";
+      : (sit && sit.value === "pago")
+        ? "Dinheiro que <b>já saiu</b> por PIX, débito ou dinheiro. Entra no gasto do mês, sem virar conta a pagar."
+        : "Vira uma <b>conta a pagar</b> na tela Mês, com a bolinha para marcar quando pagar.";
   }
 
   // "Em quantas vezes" só aparece quando a despesa é parcelada.
   function ligaRepete() {
+    const sit = $('#modalForm [name="situacao"]');
+    if (sit) sit.addEventListener("change", pintaAjudaGasto);
     const sel = $('#modalForm [name="repete"]');
     if (!sel) return;
     const mostra = () => {
@@ -3972,6 +4000,34 @@ FC.Migrar = (function () {
       aviso = `Lançado em <b>${mesLabel(String(data).slice(0, 7))}</b>: ${esc(base.descricao)}, `
         + `${money(base.valor)}, ${d.onde === "cartao" ? "no cartão" : "fora do cartão"}`
         + (rep === "mensal" ? ", todo mês" : "") + ".";
+      // Fora do cartão e ainda não paga: isso é uma CONTA A PAGAR, com
+      // vencimento e bolinha para marcar. Era o que faltava para telefone,
+      // energia e internet aparecerem onde você procura por elas.
+      if (d.onde !== "cartao" && (d.situacao || "pagar") === "pagar") {
+        const n = rep === "parcelado" ? Math.max(2, Math.min(72, parseInt(d.vezes, 10) || 2)) : 1;
+        const ym0 = data.slice(0, 7), dia = data.slice(8, 10);
+        for (let k = 1; k <= n; k++) {
+          const ym = Bl.ymAdd(ym0, k - 1);
+          await Store.add("bills", {
+            descricao: n > 1 ? `${base.descricao} (${k}/${n})` : base.descricao,
+            valor: base.valor,
+            vencimento: ym + "-" + String(Math.min(+dia, Bl.diasNoMes(ym))).padStart(2, "0"),
+            recorrencia: rep === "mensal" ? "mensal" : "nenhuma",
+            pagas: {}, valores: {}
+          });
+        }
+        mesSel = ym0;
+        aviso = n > 1
+          ? `Lançadas <b>${n} contas a pagar</b> de ${money(base.valor)}: ${esc(base.descricao)}, a partir de ${mesLabel(ym0)}.`
+          : `Conta a pagar em <b>${mesLabel(ym0)}</b>: ${esc(base.descricao)}, ${money(base.valor)}`
+            + (rep === "mensal" ? ", todo mês" : "") + ".";
+        await Store.flush();
+        fecharModal();
+        render();
+        avisar(aviso);
+        return;
+      }
+
       if (rep === "parcelado") {
         // Parcelado vira uma despesa por mês, com fim marcado. As dos meses
         // à frente entram como projeção: contam na previsão e somem se a
@@ -4184,6 +4240,7 @@ FC.Migrar = (function () {
         const [col, id] = dl.dataset.delLanc.split(":");
         if (!confirm("Apagar este lançamento?")) return;
         await Store.remove(col, id);
+        await Store.flush();
         render();
         return;
       }
