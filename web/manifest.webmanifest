@@ -1,14 +1,40 @@
 {
-  "name": "FinControl AI",
+  "id": "/",
+  "name": "FinControl",
   "short_name": "FinControl",
-  "description": "Controle financeiro pessoal e familiar com inteligência de projeções.",
+  "description": "Quanto sobra no mês, o que falta pagar e para onde os próximos meses caminham.",
   "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#0b1120",
-  "theme_color": "#111827",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#f2f2f7",
+  "theme_color": "#f2f2f7",
   "lang": "pt-BR",
+  "dir": "ltr",
+  "categories": ["finance", "productivity"],
   "icons": [
-    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Lançar gasto",
+      "short_name": "Lançar",
+      "url": "./index.html#lancar",
+      "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Lançar receita",
+      "short_name": "Receita",
+      "url": "./index.html#receita",
+      "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Previsão dos próximos meses",
+      "short_name": "Futuro",
+      "url": "./index.html#futuro",
+      "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
   ]
 }

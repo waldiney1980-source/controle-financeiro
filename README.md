@@ -59,15 +59,110 @@ controle-financeiro/
     ├── index.html             ← app single-page (PWA)
     ├── manifest.webmanifest
     ├── sw.js                  ← service worker (offline)
-    ├── css/styles.css
+    ├── css/app.css
     ├── js/
     │   ├── config.js          ← credenciais Supabase (não commitar as reais)
     │   ├── supabaseClient.js   ← inicialização do cliente
+    │   ├── auth.js            ← login (Supabase Auth)
     │   ├── store.js           ← estado + camada de dados (Supabase ou local)
-    │   ├── forecast.js        ← projeções e inteligência financeira
-    │   └── app.js             ← UI, navegação, render dos dashboards
+    │   ├── bills.js           ← contas a pagar (competência, vencimento, pago)
+    │   ├── fatura.js          ← leitura do PDF da fatura e expansão das parcelas
+    │   ├── migrar.js          ← traz os dados do painel-fatura antigo
+    │   └── ui.js              ← as três telas
     └── assets/icons/
 ```
+
+### 3.1 As três telas
+
+| Tela | Para quê |
+|---|---|
+| **Mês** | Quanto sobra, quanto cabe por dia, para onde o dinheiro vai e as contas a pagar (com marcar pago). |
+| **Lançamentos** | Tudo do mês numa lista só — fatura, parcelas, contas e o que foi digitado. É onde se lança um gasto e se importa a fatura, em PDF, em .txt ou colando o texto. |
+| **Conta** | O que entra e o que sai sem passar no cartão: receitas (avulsas ou todo mês), despesas fora da fatura e as contas a pagar, com o saldo do mês. |
+| **Futuro** | Dash de previsão: quanto já está comprometido em 12 meses, qual mês aperta mais, quanto ainda falta de parcelas, a tabela mês a mês, o gráfico e quando cada parcela acaba. |
+
+A fatura entra de três jeitos, em **Lançamentos → Importar**:
+
+- **PDF**, lido pelo pdf.js.
+- **Arquivo .txt** (ou .csv), o extrato salvo em texto.
+- **Colando o texto** direto na caixa, o que você copia do aplicativo do banco.
+
+Os três passam pelo mesmo leitor: ele acha o vencimento, separa as compras dos
+estornos, reconhece "PARC 08/10" e joga as parcelas que faltam nos meses seguintes.
+O que importa é uma linha por lançamento, começando pela data.
+
+O extrato do Banco do Brasil (Auto-Atendimento → Fatura do Cartão de Crédito, salvo
+em .txt) foi o caso que guiou o leitor, e ele traz três armadilhas já tratadas:
+
+- vem em **ISO-8859-1**, não em UTF-8 (lido como UTF-8, todo acento vira lixo);
+- imprime **duas colunas de valor**, "Valor R$" e depois "Valor US$", quase sempre
+  zerada — pegar o último número da linha zerava a fatura inteira;
+- **não escreve o vencimento** em lugar nenhum. Nesse caso o app não pergunta: usa o
+  mês da compra mais recente, importa, e avisa qual mês usou, para você corrigir se
+  for outro. O dia do vencimento fica num campo da própria folha e é guardado no
+  cartão, para as parcelas caírem no dia certo.
+
+A folha de lançamento abre com os dois grupos à mostra, **Cartão** e **Despesa**, em
+vez de um menu que esconde a segunda opção: é a primeira decisão do lançamento, e o
+rodapé da folha explica o que cada grupo significa. Cartão vai para a fatura; Despesa
+sai da conta por boleto, PIX, débito ou dinheiro, e aparece na aba Conta.
+
+Ao lançar um gasto dá para dizer o que ele faz nos meses seguintes:
+
+- **Não se repete** — fica só naquele mês.
+- **Volta todo mês, sem prazo** — assinatura, mensalidade, academia. Repete sozinho para a frente e entra na previsão.
+- **É parcelado, tem fim** — informe em quantas vezes e o valor de cada parcela. O app cria uma despesa por mês até a última, dentro ou fora do cartão.
+
+A receita funciona igual: lançada como **entra todo mês**, ela se repete sozinha para
+a frente e entra na previsão; lançada como **só desta vez** (13º, aluguel recebido, um
+extra), vale só naquele mês. Quem tem apenas salário fixo pode continuar escrevendo um
+número no campo "Receita fixa mensal" da aba Conta — ele vale para todos os meses e
+deixa de contar assim que existir uma receita marcada como mensal, para não somar duas
+vezes.
+
+Conta a pagar tem o mesmo tratamento: marcada como mensal, ela reaparece todo mês com
+o seu vencimento, e o valor pode ser corrigido só no mês que mudou (luz e água) ou em
+todos de uma vez.
+
+### 3.2 Instalar no celular e no computador (PWA)
+
+O app em `web/` é um PWA: publicado num endereço `https`, ele instala como
+aplicativo, abre em tela cheia sem barra de navegador e continua abrindo sem
+internet (o service worker guarda uma cópia dos arquivos).
+
+- **Publicar:** o `netlify.toml` já aponta para `web/`, sem etapa de build. Qualquer
+  hospedagem estática serve, desde que seja `https` (exigência do service worker).
+- **iPhone/iPad:** abra no Safari, toque em Compartilhar e em *Adicionar à Tela de Início*.
+- **Android:** o Chrome oferece *Instalar aplicativo* sozinho.
+- **Computador:** ícone de instalar na barra de endereço do Chrome ou do Edge.
+
+Segurando o ícone na tela de início aparecem dois atalhos: **Lançar gasto**, que já
+abre a folha de lançamento, e **Futuro**, que abre a previsão.
+
+Depois de publicar uma versão nova, o app se atualiza sozinho na próxima abertura.
+Se quiser forçar, toque na etiqueta da versão (`v42`) no alto da tela: ela limpa o
+cache e recarrega.
+
+### 3.3 Arquivo único, para abrir com dois cliques
+
+O app de verdade é o PWA em `web/` (é ele que vai para o ar e sincroniza com o
+Supabase). Para ter o mesmo app num arquivo só, que abre com dois cliques e roda
+sem servidor e sem login:
+
+```bash
+python3 build-html.py
+```
+
+Isso gera `controle-financeiro.html` juntando `web/index.html`, o CSS e os scripts.
+Aberto assim ele guarda tudo no navegador daquele aparelho, sem Supabase: é uma
+cópia solta, não o cofre da família. A fonte continua sendo `web/` — edite lá e
+gere de novo.
+
+Quem usava o painel de arquivo único (`painel-fatura-*.html`) traz tudo para cá em
+**Lançamentos → Importar → Trazer de fora**: aceita o `.html` (ou o `.json` exportado
+dele) e também procura o que ficou guardado no navegador. Nada é apagado: o que já
+está no app é pulado, e rodar duas vezes não duplica. A mesma tela tem **Baixar meus
+dados**, que grava um `.json` com tudo e volta pelo mesmo caminho.
 
 ## 4. Como rodar (MVP local)
 

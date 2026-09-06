@@ -1,5 +1,5 @@
 /* Service Worker — FinControl (rede primeiro, cache como reserva offline) */
-const CACHE = "fincontrol-v40";
+const CACHE = "fincontrol-v45";
 const ASSETS = [
   "./index.html",
   "./css/app.css",
@@ -9,8 +9,13 @@ const ASSETS = [
   "./js/store.js",
   "./js/bills.js",
   "./js/fatura.js",
+  "./js/migrar.js",
   "./js/ui.js",
-  "./manifest.webmanifest"
+  "./manifest.webmanifest",
+  "./assets/icons/icon-192.png",
+  "./assets/icons/icon-512.png",
+  "./assets/icons/icon-maskable-512.png",
+  "./assets/icons/apple-touch-icon.png"
 ];
 
 self.addEventListener("install", (e) => {

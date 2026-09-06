@@ -28,3 +28,7 @@ tmp/
 *.ofx
 extratos/
 faturas/
+
+# O painel de arquivo unico com os lancamentos de verdade dentro.
+# Fica so no computador: e dado pessoal, nao codigo.
+painel-fatura-*.html

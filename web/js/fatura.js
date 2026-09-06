@@ -26,8 +26,11 @@ FC.Fatura = (function () {
     JUL: 7, AGO: 8, SET: 9, OUT: 10, NOV: 11, DEZ: 12
   };
 
-  // Valor em reais: 1.234,56 · 45,90 · -12,00 · 12,00- (crédito com o sinal atrás)
-  const RE_VALOR = /-?\s*R?\$?\s*\d{1,3}(?:\.\d{3})*,\d{2}\s*-?/g;
+  // Valor em reais: 1.234,56 · 45,90 · R$ 45,90 · -12,00 · 12,00- (crédito
+  // com o sinal atrás). O "R$" só conta junto com o cifrão: aceitando um "R"
+  // solto, a coluna de país "BR" era engolida pelo valor e o estabelecimento
+  // ficava com um "B" pendurado no nome.
+  const RE_VALOR = /-?\s*(?:R\$)?\s*\d{1,3}(?:\.\d{3})*,\d{2}\s*-?/g;
 
   // Linhas que existem na fatura mas NÃO são compra: cabeçalho, totais,
   // pagamento da fatura anterior, código de barras. Entram na lista de
@@ -66,6 +69,38 @@ FC.Fatura = (function () {
     return linhas;
   }
 
+  // ---------- Leitura de texto ----------
+  // A fatura também chega como texto: copiada do aplicativo do banco,
+  // salva como .txt ou colada na mão. Aqui não há coordenada para
+  // reconstruir, cada quebra de linha já é uma linha.
+  function linhasDeTexto(texto) {
+    return String(texto || "")
+      .split(/\r?\n/)
+      .map((l) => l.replace(/[\t\u00a0]+/g, " ").replace(/\s+/g, " ").trim())
+      .filter((l) => l.length > 1);
+  }
+
+  // Escolhe o caminho pelo tipo do arquivo: PDF passa pelo pdf.js, o resto
+  // (txt, csv, o que o banco exportar em texto) é lido direto.
+  //
+  // O texto do Banco do Brasil não vem em UTF-8: vem em ISO-8859-1, o padrão
+  // antigo do Windows. Lido como UTF-8, "Transações" vira "Transa��es" e o
+  // acento some do nome de todo estabelecimento. Por isso a leitura tenta
+  // UTF-8 no modo estrito e, quando ele reclama, cai para a tabela antiga.
+  async function lerArquivo(file) {
+    const nome = String(file.name || "").toLowerCase();
+    const tipo = String(file.type || "").toLowerCase();
+    if (nome.endsWith(".pdf") || tipo === "application/pdf") return lerLinhas(file);
+    const buf = await file.arrayBuffer();
+    let texto;
+    try {
+      texto = new TextDecoder("utf-8", { fatal: true }).decode(buf);
+    } catch (e) {
+      texto = new TextDecoder("windows-1252").decode(buf);
+    }
+    return linhasDeTexto(texto);
+  }
+
   // ---------- Números ----------
   function valorBR(bruto) {
     const s = String(bruto || "");
@@ -79,34 +114,90 @@ FC.Fatura = (function () {
   // O rótulo nem sempre fica colado na data. Na fatura do Banco do Brasil,
   // "Vencimento" é uma linha e a data está três linhas abaixo, sozinha —
   // por isso a busca olha as linhas seguintes, e não só a mesma linha.
+  // O rótulo do vencimento muda de banco para banco, e a data quase nunca
+  // está colada nele: pode vir na mesma linha, na linha seguinte, ou três
+  // linhas abaixo. Aqui a busca é tolerante de propósito — perguntar o mês
+  // ao usuário é o último recurso, não o primeiro.
+  const RE_ROTULO_VENC = /vencimento|vencto|venc\.|vence em|pagar at[ée]|pagamento at[ée]/i;
+  const RE_DATA = /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/;
+  const RE_DATA_EXTENSO = /(\d{1,2})\s*(?:de\s+)?([a-zç]{3,9})\.?\s*(?:de\s+)?(\d{4})/i;
+
+  function dataExtenso(linha) {
+    const m = linha.match(RE_DATA_EXTENSO);
+    if (!m) return null;
+    const mm = MESES[m[2].slice(0, 3).toUpperCase().replace("Ç", "C")];
+    return mm ? [m[1], pad(mm), m[3]] : null;
+  }
+
+  // Devolve { partes:[dia, mes, ano], linha } — o índice da linha é usado
+  // depois para NÃO ler o vencimento como se fosse uma compra: quando a data
+  // vem junto do valor a pagar, a linha tem cara de lançamento.
   function acharVencimento(linhas) {
-    const dataSolta = /(\d{2})\/(\d{2})\/(\d{4})/;
     for (let i = 0; i < linhas.length; i++) {
-      if (!/vencimento/i.test(linhas[i])) continue;
-      const naMesma = linhas[i].match(/vencimento[^\d]{0,20}(\d{2})\/(\d{2})\/(\d{2,4})/i);
-      if (naMesma) return [naMesma[1], naMesma[2], naMesma[3]];
-      for (let k = i + 1; k <= i + 4 && k < linhas.length; k++) {
-        const m = linhas[k].match(dataSolta);
-        if (m && linhas[k].replace(dataSolta, "").trim().length <= 3) return [m[1], m[2], m[3]];
+      if (!RE_ROTULO_VENC.test(linhas[i])) continue;
+      const naMesma = linhas[i].match(RE_DATA);
+      if (naMesma) return { partes: [naMesma[1], naMesma[2], naMesma[3]], linha: i };
+      const ext = dataExtenso(linhas[i]);
+      if (ext) return { partes: ext, linha: i };
+      // Nas seis linhas seguintes, a primeira data que aparecer. Não exijo
+      // mais que a linha tenha SÓ a data: em muita fatura ela vem junto do
+      // valor a pagar ("21/09/2026 R$ 4.210,55") e a regra antiga desistia.
+      for (let k = i + 1; k <= i + 6 && k < linhas.length; k++) {
+        const m = linhas[k].match(RE_DATA);
+        if (m) return { partes: [m[1], m[2], m[3]], linha: k };
+        const e = dataExtenso(linhas[k]);
+        if (e) return { partes: e, linha: k };
       }
     }
     // Reserva: o fechamento diz a competência mesmo sem o vencimento.
-    for (const l of linhas) {
-      const m = l.match(/fatura fechada em\s*(\d{2})\/(\d{2})\/(\d{4})/i);
-      if (m) return [m[1], m[2], m[3]];
+    for (let i = 0; i < linhas.length; i++) {
+      const m = linhas[i].match(/fatura fechada em\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i);
+      if (m) return { partes: [m[1], m[2], m[3]], linha: i };
     }
     return null;
+  }
+
+  // Última linha de reserva: a competência pelas próprias compras. A fatura
+  // que vence em agosto é a que traz compras até agosto, então o mês da
+  // compra mais recente acerta o mês na quase totalidade dos casos — e um
+  // palpite que o usuário confere é melhor do que uma tela travada.
+  function competenciaPelasCompras(linhas) {
+    const agora = new Date();
+    const anoHoje = agora.getFullYear(), mesHoje = agora.getMonth() + 1;
+    let melhor = null;
+    linhas.forEach((l) => {
+      if (RE_IGNORAR.test(l)) return;
+      const m = l.match(/^(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?\b/);
+      if (!m) return;
+      if (!RE_VALOR.test(l)) return;               // linha sem dinheiro não é compra
+      RE_VALOR.lastIndex = 0;
+      const mes = +m[2];
+      if (mes < 1 || mes > 12) return;
+      // Sem ano na linha, o mês que ainda não chegou é do ano passado: uma
+      // parcela comprada em 10/12 numa fatura de setembro é de dezembro
+      // PASSADO. Sem isso, dezembro vencia a disputa e a fatura inteira
+      // caía no mês errado.
+      const ano = m[3]
+        ? (m[3].length === 2 ? 2000 + +m[3] : +m[3])
+        : (mes > mesHoje ? anoHoje - 1 : anoHoje);
+      const chave = ano * 12 + mes;
+      if (!melhor || chave > melhor.chave) melhor = { chave, ano, mes };
+    });
+    return melhor ? `${melhor.ano}-${pad(melhor.mes)}` : null;
   }
 
   function lerCabecalho(linhas) {
     const texto = linhas.join("\n");
     let vencimento = null, competencia = null, total = null;
 
+    let linhaVencimento = -1;
     const v = acharVencimento(linhas);
     if (v) {
-      const ano = v[2].length === 2 ? "20" + v[2] : v[2];
-      vencimento = `${ano}-${v[1]}-${v[0]}`;
-      competencia = `${ano}-${v[1]}`;
+      const [d, mm, yy] = v.partes;
+      const ano = String(yy).length === 2 ? "20" + yy : String(yy);
+      vencimento = `${ano}-${pad(+mm)}-${pad(+d)}`;
+      competencia = `${ano}-${pad(+mm)}`;
+      linhaVencimento = v.linha;
     }
     // "FATURA DE SETEMBRO/2026" ou "Fatura Setembro 2026"
     if (!competencia) {
@@ -119,8 +210,16 @@ FC.Fatura = (function () {
     }
     m = texto.match(/(?:total (?:da fatura|a pagar)|valor total(?: da fatura)?)[^\d-]{0,20}(\d{1,3}(?:\.\d{3})*,\d{2})/i);
     if (m) total = valorBR(m[1]).valor;
+    // O extrato do BB não escreve "Total da Fatura": escreve uma linha
+    // "Total" com o valor em reais na frente e o dólar atrás.
+    if (total == null) {
+      for (const l of linhas) {
+        const t = l.match(/^total\s+(-?\d{1,3}(?:\.\d{3})*,\d{2})/i);
+        if (t) { total = valorBR(t[1]).valor; break; }
+      }
+    }
 
-    return { vencimento, competencia, total };
+    return { vencimento, competencia, total, linhaVencimento };
   }
 
   // ---------- Parcela ----------
@@ -143,10 +242,30 @@ FC.Fatura = (function () {
   }
 
   // ---------- Uma linha vira (ou não) uma compra ----------
-  function parseLinha(linha, competencia) {
+  function parseLinha(linha, competencia, opcoes) {
+    const rsAntesDeUs = !!(opcoes && opcoes.rsAntesDeUs);
     if (RE_IGNORAR.test(linha)) return { ignorada: true, motivo: "não é compra (cabeçalho, total ou pagamento)", linha };
 
     let dia, mes, ano = null, casado;
+    // Data ao contrário, do jeito que planilha e extrato exportam: 2026-08-09.
+    let iso = linha.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})\b/);
+    if (iso) {
+      ano = +iso[1]; mes = +iso[2]; dia = +iso[3];
+      const resto0 = linha.slice(iso[0].length).trim();
+      const vals = resto0.match(RE_VALOR);
+      if (!vals || !vals.length) return null;
+      const { valor: v0, negativo: n0 } = valorBR(vals[vals.length - 1]);
+      if (!v0) return null;
+      let d0 = resto0;
+      vals.forEach((v) => { d0 = d0.replace(v, " "); });
+      d0 = d0.replace(/R\$/g, " ").replace(/[;,|]+/g, " ").replace(/\s+/g, " ").trim() || "Compra";
+      const p0 = acharParcela(d0);
+      return {
+        data_compra: `${ano}-${pad(mes)}-${pad(dia)}`,
+        descricao: p0 ? p0.limpa : d0, valor: v0, credito: n0,
+        parcelaAtual: p0 ? p0.i : null, parcelaTotal: p0 ? p0.n : null, linha
+      };
+    }
     let m = linha.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
     if (m) {
       dia = +m[1]; mes = +m[2];
@@ -164,9 +283,16 @@ FC.Fatura = (function () {
     const valores = resto.match(RE_VALOR);
     if (!valores || !valores.length) return null;    // linha com data mas sem valor
 
-    // Fatura em duas moedas (dólar e real) traz dois números: o de VERDADE,
-    // o que vai ser cobrado, é o último — em reais.
-    const bruto = valores[valores.length - 1];
+    // Fatura em duas moedas traz dois números na linha. Qual deles é o real
+    // depende do banco: o extrato do Banco do Brasil imprime "Valor R$" e
+    // depois "Valor US$", então o de verdade é o PENÚLTIMO — o último é o
+    // dólar, quase sempre 0,00. Pegar o último zerava a fatura inteira e o
+    // app dizia não ter reconhecido nenhuma compra.
+    let bruto = valores[valores.length - 1];
+    if (valores.length > 1) {
+      if (rsAntesDeUs) bruto = valores[valores.length - 2];
+      else if (!valorBR(bruto).valor) bruto = valores[valores.length - 2];
+    }
     const { valor, negativo } = valorBR(bruto);
     if (!valor) return null;
 
@@ -219,19 +345,96 @@ FC.Fatura = (function () {
     return m ? { nome: m[1].trim(), cartao: m[2] } : null;
   }
 
+  // ---------- Leitura tolerante ----------
+  // Nem todo PDF entrega a linha inteira: às vezes a data vem sozinha numa
+  // linha, a descrição na seguinte e o valor na outra, porque o texto foi
+  // extraído por coluna. Este segundo passe remonta isso. Só roda quando o
+  // passe normal não achou nada — é palpite, e palpite é o último recurso.
+  const RE_SO_DATA = /^(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?$/;
+  const RE_SO_VALOR = /^-?\s*R?\$?\s*\d{1,3}(?:\.\d{3})*,\d{2}\s*-?$/;
+
+  function analisarTolerante(linhas, competencia) {
+    const itens = [];
+    let dataPendente = null, textoPendente = "";
+    const [cy, cm] = competencia.split("-").map(Number);
+
+    const empurra = (desc, bruto, data) => {
+      const { valor, negativo } = valorBR(bruto);
+      if (!valor) return;
+      const limpo = String(desc || "").replace(/R\$/g, " ").replace(/[;|]+/g, " ")
+        .replace(/\s+/g, " ").trim();
+      if (!limpo || limpo.length < 2) return;
+      const parcela = acharParcela(limpo);
+      let compra = data;
+      if (!compra) compra = `${cy}-${pad(cm)}-01`;
+      itens.push({
+        data_compra: compra,
+        descricao: parcela ? parcela.limpa : limpo,
+        valor, credito: negativo,
+        parcelaAtual: parcela ? parcela.i : null,
+        parcelaTotal: parcela ? parcela.n : null,
+        linha: `${data || ""} ${limpo} ${bruto}`.trim()
+      });
+    };
+
+    linhas.forEach((l) => {
+      if (RE_IGNORAR.test(l)) { textoPendente = ""; return; }
+
+      const soData = l.match(RE_SO_DATA);
+      if (soData) {
+        const mes = +soData[2], dia = +soData[1];
+        if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+          const ano = soData[3]
+            ? (soData[3].length === 2 ? 2000 + +soData[3] : +soData[3])
+            : (mes > cm ? cy - 1 : cy);
+          dataPendente = `${ano}-${pad(mes)}-${pad(dia)}`;
+        }
+        return;
+      }
+
+      if (RE_SO_VALOR.test(l)) {                    // valor sozinho: casa com o texto anterior
+        if (textoPendente) empurra(textoPendente, l, dataPendente);
+        textoPendente = "";
+        dataPendente = null;
+        return;
+      }
+
+      const valores = l.match(RE_VALOR);
+      RE_VALOR.lastIndex = 0;
+      if (valores && valores.length) {              // texto e valor na mesma linha, sem data
+        let desc = l;
+        valores.forEach((v) => { desc = desc.replace(v, " "); });
+        empurra(desc, valores[valores.length - 1], dataPendente);
+        textoPendente = "";
+        dataPendente = null;
+        return;
+      }
+
+      if (/[a-zA-Z]{3}/.test(l) && l.length <= 80) textoPendente = l;
+    });
+    return itens;
+  }
+
   // ---------- Fatura inteira ----------
   function analisar(linhas, competenciaPadrao) {
     const cab = lerCabecalho(linhas);
-    const competencia = cab.competencia || competenciaPadrao;
+    // Cabeçalho de colunas "... Valor R$   Valor US$": diz que o real vem
+    // antes do dólar em cada linha.
+    const rsAntesDeUs = linhas.some((l) => /valor\s*r\$[\s\S]{0,40}valor\s*us\$/i.test(l));
+    // Ordem: o que está escrito na fatura, o palpite pelas compras, e só
+    // então o que a tela sugeriu.
+    const palpite = cab.competencia ? null : competenciaPelasCompras(linhas);
+    const competencia = cab.competencia || palpite || competenciaPadrao;
     const itens = [], ignoradas = [];
     let secao = "", portador = "";
-    linhas.forEach((l) => {
+    linhas.forEach((l, indice) => {
+      if (indice === cab.linhaVencimento) return;   // é o cabeçalho, não uma compra
       const s = ehSecao(l);
       if (s) { secao = s; return; }
       const p = ehPortador(l);
       if (p) { portador = p.nome; secao = ""; return; }
 
-      const r = parseLinha(l, competencia);
+      const r = parseLinha(l, competencia, { rsAntesDeUs });
       if (!r) return;
       if (r.ignorada) { ignoradas.push(r); return; }
       r.secao = secao;
@@ -241,15 +444,30 @@ FC.Fatura = (function () {
       r.pagamento = r.credito && /pgto|pagamento/i.test(r.descricao);
       itens.push(r);
     });
+    let modo = "normal";
+    if (!itens.length) {
+      analisarTolerante(linhas, competencia).forEach((i) => {
+        i.secao = ""; i.portador = "";
+        i.pagamento = i.credito && /pgto|pagamento/i.test(i.descricao);
+        itens.push(i);
+      });
+      if (itens.length) modo = "tolerante";
+    }
+
     const compras = itens.filter((i) => !i.credito);
     const estornos = itens.filter((i) => i.credito && !i.pagamento);
     const bruto = compras.reduce((s, i) => s + i.valor, 0);
     const abatido = estornos.reduce((s, i) => s + i.valor, 0);
     return {
       competencia,
-      // false = o PDF não disse o vencimento e a competência veio do palpite
-      // de fora. Só nesse caso a tela precisa perguntar o mês.
+      modo,
+      // Amostra do que foi lido, para a tela mostrar quando não reconhecer
+      // nada: é a única forma de o usuário entender o que o app está vendo.
+      amostra: linhas.slice(0, 8),
+      // Lida = estava escrita na fatura. Senão, `competenciaOrigem` diz de
+      // onde veio o palpite, para a tela avisar sem travar a importação.
       competenciaDetectada: !!cab.competencia,
+      competenciaOrigem: cab.competencia ? "fatura" : (palpite ? "compras" : "tela"),
       vencimento: cab.vencimento,
       totalDeclarado: cab.total,
       itens,
@@ -427,7 +645,8 @@ FC.Fatura = (function () {
   }
 
   return {
-    lerLinhas, analisar, expandir, substituiveis, manuaisEmRisco, diaVencimento,
+    lerLinhas, lerArquivo, linhasDeTexto,
+    analisar, analisarTolerante, expandir, acharVencimento, competenciaPelasCompras, substituiveis, manuaisEmRisco, diaVencimento,
     valorBR, acharParcela, ehRecorrente, chaveSerie, recorrentesConhecidas
   };
 })();

@@ -12,6 +12,12 @@
   let forcarOffline = false;
   try { forcarOffline = localStorage.getItem("fc_force_offline") === "1"; } catch (e) {}
 
+  // Arquivo aberto direto do computador (file://, e o que o navegador faz
+  // com ele: data:, blob:) não tem endereço de origem, e o Supabase recusa
+  // login assim. Nesse caso o app roda sozinho, guardando tudo no próprio
+  // navegador, em vez de travar numa tela de login que nunca passa.
+  if (!/^https?:$/.test(location.protocol)) forcarOffline = true;
+
   const hasConfig = !forcarOffline && cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY;
   const hasLib = typeof window.supabase !== "undefined" && window.supabase.createClient;
 

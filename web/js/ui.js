@@ -1,21 +1,21 @@
 /* ===========================================================
  * ui.js — FinControl
  *
- * O app faz uma coisa: você manda a fatura, ele mostra para onde o
- * seu dinheiro vai. Quatro telas, nada além disso.
+ * Três telas, e nada além disso:
  *
- *   Início   quanto sobra e como está a saúde do mês
- *   Faturas  mandar o PDF e ver o que já entrou (até 5)
- *   Fixos    o que se repete, no cartão e fora dele
- *   Futuro   os próximos meses, mês a mês
+ *   Mês          quanto sobra, para onde vai e o que falta pagar
+ *   Lançamentos  tudo do mês numa lista só, e o botão de lançar
+ *   Futuro       os próximos meses, as parcelas e o que se repete
  *
- * O motor é o de sempre: fatura.js lê o PDF, bills.js faz a conta de
- * competência, store.js guarda no cofre da família.
+ * O motor não mudou: fatura.js lê o PDF, bills.js faz a conta de
+ * competência, store.js guarda no cofre da família e migrar.js traz
+ * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v40";
+  const APP_VERSION = "v45";
   const MAX_FATURAS = 5;
-  const MESES_FUTURO = 9;
+  const MESES_FUTURO = 12;
+  const LISTA_INICIAL = 40;
 
   const { Store } = FC;
   const Bl = FC.Bills;
@@ -37,11 +37,13 @@
       { month: "short", year: "2-digit" });
     return s.charAt(0).toUpperCase() + s.slice(1).replace(".", "");
   }
-  function dataCurta(d) {
-    if (!d) return "";
-    const [y, m, dia] = d.split("-");
-    return `${dia}/${m}`;
+  function mesNome(ym) {
+    if (!ym) return "—";
+    const [y, m] = ym.split("-").map(Number);
+    const s = new Date(y, m - 1, 1).toLocaleDateString(cfg.LOCALE || "pt-BR", { month: "long" });
+    return s.charAt(0).toUpperCase() + s.slice(1);
   }
+  const diaCurto = (d) => (d ? `${String(d).slice(8, 10)}/${String(d).slice(5, 7)}` : "");
   function curto(v) {
     const n = Math.abs(+v || 0);
     if (n >= 1000) {
@@ -51,15 +53,37 @@
     return String(Math.round(n));
   }
 
-  let tela = "inicio";
+  let tela = "mes";
   let cenario = "sem-novas";
+  let busca = "";
+  let verTudo = false;
 
   // ---------- Leituras do cofre ----------
   const ehCartao = (t) => !!t.card_id || t.forma === "cartao";
 
-  function renda() {
+  function rendaFixa() {
     const p = Store.allSync("prefs")[0];
     return p && p.renda != null ? (+p.renda || 0) : 0;
+  }
+
+  // Receitas lançadas no mês. As marcadas como mensais se repetem para a
+  // frente sozinhas, como as despesas.
+  function receitasDoMes(ym) {
+    return ocorrenciasMensais(Store.allSync("transactions"), ym)
+      .filter((t) => t.tipo === "receita")
+      .sort((a, b) => String(a.data || "").localeCompare(String(b.data || "")));
+  }
+
+  // A renda do mês: o que foi lançado como receita mais, quando não há
+  // nenhuma receita que se repita, o valor fixo do campo da aba Conta.
+  // Assim quem só tem salário fixo escreve um número e pronto, e quem lança
+  // as entradas de verdade não vê o salário contado duas vezes.
+  function renda(ym) {
+    const mes = ym || mesAtivo();
+    const lista = receitasDoMes(mes);
+    const soma = lista.reduce((t, r) => t + (+r.valor || 0), 0);
+    const temMensal = lista.some((r) => r.recorrencia === "mensal");
+    return soma + (temMensal ? 0 : rendaFixa());
   }
 
   // Uma fatura importada = um grupo de lançamentos com o mesmo fatura_id.
@@ -75,14 +99,17 @@
     return Object.values(m).sort((a, b) => b.ym.localeCompare(a.ym));
   }
 
-  // O mês da tela é o da fatura mais recente. Sem fatura, o mês corrente.
+  // O mês da tela é o corrente, quando há algo nele; senão o da fatura mais
+  // recente. Abrir o app no dia 2 e cair em julho passaria por defeito.
   function mesFoco() {
-    const f = faturas();
-    return f.length ? f[0].ym : hoje().slice(0, 7);
+    const atual = hoje().slice(0, 7);
+    const ms = mesesDisponiveis();
+    if (ms.indexOf(atual) >= 0) return atual;
+    // Sem mês corrente na lista, o mais recente que não seja futuro.
+    const passados = ms.filter((m) => m <= atual);
+    return passados.length ? passados[passados.length - 1] : (ms[0] || atual);
   }
 
-  // Mês escolhido no filtro. "" = segue a fatura mais recente sozinho, que
-  // é o certo logo depois de importar.
   let mesSel = "";
   function mesAtivo() {
     const ms = mesesDisponiveis();
@@ -90,24 +117,46 @@
     return mesFoco();
   }
 
-  // Um mês por fatura guardada, mais o mês corrente. Não invento meses que
-  // não têm fatura: aí a tela mostraria zero e pareceria defeito.
+  // Meses que têm alguma coisa dentro, mais o corrente. Não invento mês
+  // vazio: a tela mostraria zero e pareceria defeito. Para a frente vale
+  // meio ano, o bastante para conferir a parcela que você acabou de lançar
+  // sem encher a régua de meses até 2028.
+  const HORIZONTE = 6;
   function mesesDisponiveis() {
+    const atual = hoje().slice(0, 7);
+    const limite = Bl.ymAdd(atual, HORIZONTE);
     const set = new Set(faturas().map((f) => f.ym));
-    set.add(hoje().slice(0, 7));
-    return Array.from(set).sort().reverse();
+    Store.allSync("transactions").forEach((t) => {
+      const m = String(t.data || "").slice(0, 7);
+      if (m && m <= limite) set.add(m);
+    });
+    Store.allSync("bills").forEach((b) => {
+      const m = String(b.vencimento || "").slice(0, 7);
+      if (m && b.recorrencia !== "mensal") set.add(m);
+    });
+    // O mês corrente e os dois seguintes entram sempre: dá para lançar o
+    // aluguel do mês que vem, ou conferir o que já cai lá, mesmo que ainda
+    // não exista nenhum lançamento real naquele mês.
+    set.add(atual);
+    set.add(Bl.ymAdd(atual, 1));
+    set.add(Bl.ymAdd(atual, 2));
+    // Do mais antigo para o mais novo, como o tempo anda.
+    return Array.from(set).sort().slice(-24);
   }
 
   function renderMeses() {
     const ms = mesesDisponiveis();
     const ativo = mesAtivo();
-    // Com um mês só não há o que filtrar — a barra some em vez de virar
-    // enfeite que não faz nada.
     const html = ms.length < 2 ? "" : ms.map((m) =>
       `<button class="mes${m === ativo ? " on" : ""}" data-mes="${m}">${mesLabel(m)}</button>`).join("");
-    ["#mesesInicio", "#mesesFixos", "#mesesFora"].forEach((sel) => {
+    ["#mesesMes", "#mesesLanc", "#mesesConta"].forEach((sel) => {
       const el = $(sel);
-      if (el) el.innerHTML = html;
+      if (!el) return;
+      el.innerHTML = html;
+      // A régua começa no passado e vai até meio ano à frente, então o mês
+      // aberto pode nascer fora da vista.
+      const on = el.querySelector(".mes.on");
+      if (on) on.scrollIntoView({ inline: "center", block: "nearest" });
     });
   }
 
@@ -135,29 +184,26 @@
   function nomeBonito(desc) {
     const original = String(desc || "").trim();
     if (!original) return "—";
-    let s = semAcento(original);
+    // O sufixo de parcela é informação, não sujeira: sai antes da limpeza
+    // e volta no fim.
+    const mp = original.match(/\s*\((\d{1,2}\/\d{1,2})\)\s*$/);
+    const sufixo = mp ? ` (${mp[1]})` : "";
+    let s = semAcento(mp ? original.slice(0, mp.index) : original);
 
-    // 1. Lugar sai primeiro. A cidade vem colada no nome com frequência
-    //    ("FerreirSao Paulo"), então o corte não exige espaço antes.
     for (let i = 0; i < 3; i++) s = s.replace(UF_FIM, "");
     s = s.replace(CIDADES, " ");
-    s = s.replace(/\s+(rio|sp|rj)\s*$/i, " ");       // "… ATLANTICA RIO"
+    s = s.replace(/\s+(rio|sp|rj)\s*$/i, " ");
 
-    // 2. Só então o "*": antes dele, a cidade inflava o lado errado e
-    //    "ICATUSEGUROS*Icat RIO DE JANEIR" virava "Icat".
     if (s.indexOf("*") > -1) {
       const partes = s.split("*").map((p) => p.trim()).filter(Boolean);
       if (partes.length > 1) {
         const primeira = partes[0];
-        // Marca costuma ser a primeira, quando é uma palavra só e inteira.
         s = (primeira.split(/\s+/).length === 1 && letras(primeira) >= 4)
           ? primeira
           : partes.reduce((a, b) => (letras(b) > letras(a) ? b : a));
       }
     }
 
-    // 3. Código de loja e forma jurídica. "com" fica de fora da lista de
-    //    propósito: cortá-lo quebraria "netflix.com" e "anthropic.com".
     s = s.replace(/\b[a-z]?\d{3,}\b/gi, " ")
       .replace(/\b(ltda|s\/?a|eireli|epp)\b\.?/gi, " ")
       .replace(/\s*-\s*/g, " ")
@@ -165,7 +211,6 @@
       .replace(/[\s.\-_/]+$/g, "")
       .replace(/\s+/g, " ").trim();
 
-    // 4. "Smiles Clube Smiles" → "Smiles Clube"
     const vistas = new Set();
     s = s.split(" ").filter((p) => {
       const k = p.toLowerCase();
@@ -175,14 +220,13 @@
       return true;
     }).join(" ");
 
-    if (letras(s) < 3) return original;              // cortou demais: desiste
+    if (letras(s) < 3) return original;
 
-    // 5. GRITANDO EM MAIÚSCULA vira Capitalizado.
     const maiusculas = (s.match(/[A-Z]/g) || []).length;
     if (maiusculas >= letras(s) * 0.7) {
       s = s.toLowerCase().replace(/(^|\s)([a-z])/g, (m, a, b) => a + b.toUpperCase());
     }
-    return s;
+    return s + sufixo;
   }
 
   // Repete no mês `ym` o que é mensal e começou antes. Uma repetição por
@@ -209,13 +253,20 @@
     return out;
   }
 
-  // Despesa fora do cartão: o que você digita. Vem de duas coleções por
-  // história do app (bills antigo e transactions), mas na tela é uma coisa só.
+  // Contas a pagar do mês: o que sai por boleto, PIX ou débito e ainda pode
+  // ser marcado como pago.
+  function contasDoMes(ym) {
+    return Bl.ocorrenciasDoMes(Store.allSync("bills"), ym)
+      .sort((a, b) => String(a.venc || "").localeCompare(String(b.venc || "")));
+  }
+
+  // Despesa fora do cartão = conta a pagar do mês + o que foi digitado como
+  // já gasto. As duas coisas somam no mês.
   function foraDoMes(ym) {
     const out = [];
-    Bl.ocorrenciasDoMes(Store.allSync("bills"), ym).forEach((o) => out.push({
+    contasDoMes(ym).forEach((o) => out.push({
       col: "bills", id: o.id, ym: o.ym, descricao: o.descricao, valor: o.valor,
-      data: o.venc, recorrencia: o.recorrencia, repetido: false
+      data: o.venc, recorrencia: o.recorrencia, paga: o.paga, pagaEm: o.pagaEm, repetido: false
     }));
     ocorrenciasMensais(Store.allSync("transactions"), ym).forEach((t) => {
       if (t.tipo !== "despesa" || ehCartao(t)) return;
@@ -228,8 +279,7 @@
   }
 
   // Cobranças do cartão que voltam todo mês. `marcada` = está valendo como
-  // mensal; `sugerida` = apareceu em duas faturas ou mais e ainda não foi
-  // confirmada. As duas aparecem na tela com um interruptor.
+  // mensal; `sugerida` = apareceu em duas faturas ou mais.
   function recorrentesCartao() {
     const tx = Store.allSync("transactions");
     const porChave = {};
@@ -244,14 +294,14 @@
     return Object.values(porChave).map((g) => {
       const recente = g.itens.slice().sort((a, b) => String(b.data).localeCompare(String(a.data)))[0];
       return {
-        chave: g.chave,
-        descricao: recente.descricao,
-        valor: +recente.valor || 0,
+        chave: g.chave, descricao: recente.descricao, valor: +recente.valor || 0,
         marcada: g.itens.some((t) => t.recorrencia === "mensal"),
-        vezes: g.meses.size,
-        ids: g.itens.map((t) => t.id)
+        vezes: g.meses.size, ids: g.itens.map((t) => t.id)
       };
-    }).filter((r) => r.marcada || r.vezes >= 2)
+    // Entra na lista o que já está valendo como mensal, o que apareceu em
+    // duas faturas e o que tem cara de assinatura mesmo com uma fatura só —
+    // senão não haveria como ligar o interruptor de uma cobrança nova.
+    }).filter((r) => r.marcada || r.vezes >= 2 || FC.Fatura.ehRecorrente(r.descricao))
       .sort((a, b) => b.valor - a.valor);
   }
 
@@ -270,26 +320,44 @@
 
     const fixos = foraDoMes(ym).reduce((s, l) => s + l.valor, 0);
 
-    // Variável = o resto da fatura. Real no mês importado; para a frente,
-    // repete o nível de hoje, porque ninguém sabe o gasto de dezembro.
+    // Variável = a compra do dia a dia: o que passou no cartão e não é
+    // parcela nem assinatura. Some direto, em vez de sair por subtração do
+    // total: as assinaturas repetidas nos meses à frente não estão na
+    // fatura de nenhum mês, e a subtração comia o gasto novo do mês.
+    // Para a frente, repete o nível de hoje — ninguém sabe o gasto de dezembro.
     let variavel;
     if (variavelBase == null) {
-      const totalCartao = tx.filter((t) => t.tipo === "despesa" && ehCartao(t) && noMes(t))
+      variavel = tx.filter((t) => t.tipo === "despesa" && ehCartao(t) && noMes(t)
+        && !t.parcela && t.recorrencia !== "mensal")
         .reduce((s, t) => s + (+t.valor || 0), 0);
-      variavel = Math.max(0, totalCartao - parcelas - recorrentes);
     } else {
       variavel = variavelBase;
     }
     return { ym, fixos, parcelas, recorrentes, variavel, total: fixos + parcelas + recorrentes + variavel };
   }
 
+  // De onde sai a estimativa de gasto livre dos meses à frente: o mês da
+  // tela, quando já tem compra do dia a dia; senão o último mês que teve.
+  // Sem isso, abrir o app num mês cuja fatura ainda não chegou projetava
+  // gasto livre zero para o ano inteiro, o que é bonito e mentiroso.
+  let refVariavel = null;
+  function baseVariavel(ym0) {
+    for (let i = 0; i < 12; i++) {
+      const m = Bl.ymAdd(ym0, -i);
+      const v = fatias(m, null).variavel;
+      if (v > 0) return { valor: v, ym: m };
+    }
+    return { valor: 0, ym: ym0 };
+  }
+
   function serieFutura(cen) {
     const ym0 = mesAtivo();
     const base = fatias(ym0, null);
+    const est = baseVariavel(ym0);
+    refVariavel = est;
     const out = [base];
     for (let i = 1; i < MESES_FUTURO; i++) {
-      const m = fatias(Bl.ymAdd(ym0, i), base.variavel);
-      // Mantendo o ritmo, a parcela que acaba é reposta por outra.
+      const m = fatias(Bl.ymAdd(ym0, i), est.valor);
       if (cen === "ritmo") m.parcelas = Math.max(m.parcelas, base.parcelas);
       m.total = m.fixos + m.parcelas + m.recorrentes + m.variavel;
       out.push(m);
@@ -305,51 +373,78 @@
     return { renda: r, ...f, pct, nivel, sobra: r - f.total };
   }
 
+  // Dias que ainda faltam no mês da tela. Mês passado não tem "por dia".
+  function diasQueFaltam(ym) {
+    const atual = hoje().slice(0, 7);
+    if (ym < atual) return 0;
+    if (ym > atual) return Bl.diasNoMes(ym);
+    return Bl.diasNoMes(ym) - new Date().getDate() + 1;
+  }
+
   // ---------- Telas ----------
   function render() {
     const t = tela;
-    ["inicio", "faturas", "fixos", "fora", "futuro"].forEach((k) =>
+    ["mes", "lancamentos", "conta", "futuro"].forEach((k) =>
       $("#tela-" + k).classList.toggle("hidden", k !== t));
     $$("#abas button").forEach((b) => b.classList.toggle("on", b.dataset.tela === t));
+    const ym = mesAtivo();
     const titulos = {
-      inicio: ["Meu mês", "Como está o mês da fatura"],
-      faturas: ["Faturas", "Mande o PDF e o resto é automático"],
-      fixos: ["Fixos", "O que se repete todo mês no cartão"],
-      fora: ["Fora do cartão", "Boleto, PIX, débito e dinheiro"],
+      mes: [mesNome(ym), "Quanto sobra e o que ainda falta pagar"],
+      lancamentos: ["Lançamentos", "Tudo o que entrou em " + mesLabel(ym)],
+      receita: [
+      { n: "descricao", l: "De onde veio", t: "text", req: true },
+      { n: "valor", l: "Valor (R$)", t: "number", req: true },
+      { n: "data", l: "Quando entrou", t: "date", v: () => hoje() },
+      { n: "repete", l: "E nos meses seguintes?", t: "select",
+        o: [{ v: "mensal", t: "Entra todo mês" }, { v: "nenhuma", t: "Só desta vez" }] }
+    ],
+    conta: ["Conta", "O que entra e o que sai sem passar no cartão"],
       futuro: ["Futuro", "Para onde os próximos meses caminham"]
     };
     $("#topoTit").textContent = titulos[t][0];
     $("#topoSub").textContent = titulos[t][1];
 
     renderMeses();
-    if (t === "inicio") renderInicio();
-    if (t === "faturas") renderFaturas();
-    if (t === "fixos") renderFixos();
-    if (t === "fora") renderFora();
+    if (t === "mes") renderMes();
+    if (t === "lancamentos") renderLancamentos();
+    if (t === "conta") renderConta();
     if (t === "futuro") renderFuturo();
   }
 
-  function renderInicio() {
-    const s = saudeDoMes();
-    const temFatura = faturas().length > 0;
+  function renderMes() {
+    const s = saudeDoMes();   // renda do mês + as quatro fatias do gasto
+    const temAlgo = s.total > 0;
 
     $("#cxSaldo").classList.toggle("ruim", s.sobra < 0 && s.renda > 0);
     $("#saldoRot").textContent = s.renda <= 0 ? "Gasto de " + mesLabel(s.ym)
       : s.sobra < 0 ? "Faltou em " + mesLabel(s.ym) : "Sobra de " + mesLabel(s.ym);
     $("#saldoNum").textContent = money(s.renda <= 0 ? s.total : Math.abs(s.sobra));
-    $("#saldoSub").textContent = !temFatura
-      ? "Nenhuma fatura importada ainda"
-      : s.renda <= 0 ? "Informe sua receita mensal para ver quanto sobra"
+    $("#saldoSub").textContent = !temAlgo
+      ? "Nada lançado neste mês ainda"
+      : s.renda <= 0 ? "Lance sua receita na aba Conta para ver quanto sobra"
       : `${money(s.renda)} de receita · ${money(s.total)} de gasto`;
 
-    // Saúde
+    // O número mais prático da tela: o que cabe por dia. No mês corrente
+    // conta só os dias que ainda faltam; num mês à frente, o mês inteiro.
+    const dias = diasQueFaltam(s.ym);
+    const atual = hoje().slice(0, 7);
+    $("#saldoDia").textContent = (s.renda > 0 && s.sobra > 0 && dias > 0)
+      ? (s.ym === atual
+          ? `Cabe ${money(s.sobra / dias)} por dia nos ${dias} dias que faltam`
+          : s.ym > atual
+            ? `Dá ${money(s.sobra / dias)} por dia ao longo de ${mesNome(s.ym).toLowerCase()}`
+            : "")
+      : "";
+
+    // Saúde do mês
     const cx = $("#saude");
-    if (!temFatura) {
+    if (!temAlgo) {
       cx.innerHTML = `<div class="vazio"><span class="em">📄</span>
-        Importe a fatura do cartão e o app monta tudo sozinho.
-        <div style="margin-top:16px"><button class="btn" data-ir="faturas">Importar fatura</button></div></div>`;
+        Importe a fatura do cartão ou lance um gasto — o resto o app monta sozinho.
+        <div style="margin-top:16px"><button class="btn" data-acao="importar">Importar fatura</button></div></div>`;
     } else if (s.renda <= 0) {
-      cx.innerHTML = `<div class="aviso atencao">Informe sua <b>receita mensal</b> logo abaixo — sem ela não dá para dizer se o mês está saudável.</div>`;
+      cx.innerHTML = `<div class="aviso atencao">Lance sua <b>receita</b> na aba Conta — sem ela não dá para dizer
+        se o mês está saudável. <button type="button" class="btn sec mini" data-ir="conta" style="margin-top:8px">Abrir a aba Conta</button></div>`;
     } else {
       const rotulo = { bom: "Saudável", atencao: "Atenção", ruim: "Apertado" }[s.nivel];
       const frase = {
@@ -360,19 +455,18 @@
       cx.innerHTML = `
         <span class="selo ${s.nivel}">${rotulo}</span>
         <div class="linha" style="padding-top:0">
-          <span class="nome">Renda comprometida</span>
-          <b>${s.pct.toFixed(0)}%</b>
+          <span class="nome">Renda comprometida</span><b>${s.pct.toFixed(0)}%</b>
         </div>
         <div class="barra"><i class="${s.nivel}" style="width:${Math.min(100, s.pct).toFixed(1)}%"></i></div>
         <p class="dica">${frase}</p>`;
     }
 
-    // O mês por dentro
+    // Para onde vai
     const dentro = [
       { ic: "💳", nome: "Cartão — gasto livre", v: s.variavel, d: "compras do mês na fatura" },
       { ic: "📆", nome: "Cartão — parcelas", v: s.parcelas, d: "compras parceladas em andamento" },
       { ic: "🔁", nome: "Cartão — recorrentes", v: s.recorrentes, d: "assinaturas e mensalidades" },
-      { ic: "🏠", nome: "Fora do cartão", v: s.fixos, d: "boleto, PIX, débito" }
+      { ic: "🏠", nome: "Fora do cartão", v: s.fixos, d: "boleto, PIX, débito e dinheiro" }
     ];
     $("#resumoMes").innerHTML = dentro.map((l) => `
       <div class="linha">
@@ -383,99 +477,180 @@
       <div class="linha"><span class="esq"><span class="nome" style="font-weight:800">Total do mês</span></span>
         <b style="font-size:16px">${money(s.total)}</b></div>`;
 
-    // Receita
-    $("#rendaBox").innerHTML = `
-      <div class="campo" style="margin-bottom:10px">
-        <label>Quanto entra por mês, já líquido</label>
-        <input type="number" id="inRenda" inputmode="decimal" step="0.01" placeholder="0,00"
-          value="${s.renda > 0 ? s.renda : ""}">
-      </div>
-      <button class="btn sec" id="btnRenda">Salvar receita</button>
-      <p class="dica">É a base de tudo: a saúde do mês e a linha da renda no gráfico saem daqui.</p>`;
+    // Contas a pagar
+    const contas = contasDoMes(s.ym);
+    $("#listaContas").innerHTML = contas.length ? contas.map((c) => `
+      <div class="linha${c.paga ? " paga" : ""}">
+        <span class="esq">
+          <button class="check${c.paga ? " on" : ""}" data-pagar="${c.id}:${c.ym}" aria-label="Marcar como paga">✓</button>
+          <span class="tocavel" data-edit-conta="${c.id}:${c.ym}"><span class="nome">${esc(c.descricao)}</span>
+          <div class="desc">${c.paga ? "pago em " + diaCurto(c.pagaEm) : "vence " + diaCurto(c.venc)}${
+            c.recorrencia === "mensal" ? " · todo mês" : ""}</div></span></span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <b>${money(c.valor)}</b>
+          <button class="btn perigo mini" data-del-conta="${c.id}">✕</button>
+        </span>
+      </div>`).join("")
+      : `<div class="vazio" style="padding:22px"><span class="em">🧾</span>Nenhuma conta cadastrada em ${mesLabel(s.ym)}.</div>`;
+
+    const aberto = contas.filter((c) => !c.paga).reduce((t, c) => t + c.valor, 0);
+    const pago = contas.filter((c) => c.paga).reduce((t, c) => t + c.valor, 0);
+    const atrasadas = contas.filter((c) => !c.paga && c.venc && c.venc < hoje());
+    $("#contasTotal").innerHTML = contas.length ? `
+      <div class="aviso${atrasadas.length ? " ruim" : ""}" style="margin-top:12px">
+        <b>${money(aberto)}</b> ainda a pagar · ${money(pago)} já pago${
+        atrasadas.length ? `<br>⚠️ ${atrasadas.length} vencida${atrasadas.length > 1 ? "s" : ""}.` : ""}
+      </div>` : "";
+
   }
 
-  function renderFaturas() {
-    const fs = faturas();
-    const cards = Store.allSync("cards");
+  // ---------- Conta: o que entra e o que sai sem passar no cartão ----------
+  function renderConta() {
+    const ym = mesAtivo();
+    const receitas = receitasDoMes(ym);
+    const fora = foraDoMes(ym);
+    const entrou = renda(ym);
+    const saiu = fora.reduce((t, l) => t + l.valor, 0);
+    const temMensal = receitas.some((r) => r.recorrencia === "mensal");
+    const fixa = rendaFixa();
 
-    $("#fatAviso").innerHTML = !cards.length
-      ? `<div class="aviso atencao">Cadastre um cartão primeiro — é dele que vem o <b>dia de vencimento</b>.</div>`
-      : fs.length >= MAX_FATURAS
-        ? `<div class="aviso">Você já tem ${fs.length} faturas. Ao importar mais uma, a mais antiga sai para manter ${MAX_FATURAS}.</div>`
-        : "";
+    $("#contaKpis").innerHTML = `
+      <div class="kpi"><div class="rot">Entrou em ${mesLabel(ym)}</div>
+        <div class="val">${money(entrou)}</div>
+        <div class="nota">${receitas.length
+          ? `${receitas.length} ${receitas.length === 1 ? "receita lançada" : "receitas lançadas"}${
+              temMensal ? "" : fixa > 0 ? ` + a receita fixa` : ""}`
+          : fixa > 0 ? "só a receita fixa lá embaixo" : "nada lançado ainda"}</div></div>
+      <div class="kpi"><div class="rot">Saiu fora do cartão</div>
+        <div class="val">${money(saiu)}</div>
+        <div class="nota">boleto, PIX, débito e dinheiro</div></div>
+      <div class="kpi"><div class="rot">Sobrou na conta</div>
+        <div class="val ${entrou - saiu < 0 ? "mal" : ""}">${money(entrou - saiu)}</div>
+        <div class="nota">antes de pagar a fatura do cartão</div></div>`;
 
-    const sel = $("#fatCard");
-    const atual = sel.value;
-    sel.innerHTML = cards.map((c) => `<option value="${c.id}">${esc(c.nome)}</option>`).join("")
-      || `<option value="">— nenhum cartão —</option>`;
-    if (atual && cards.some((c) => c.id === atual)) sel.value = atual;
-    $("#btnEscolher").disabled = !cards.length;
+    $("#listaReceitas").innerHTML = receitas.length ? receitas.map((r) => `
+      <div class="linha">
+        <span class="esq"><span class="ico">${r.recorrencia === "mensal" ? "🔁" : "💰"}</span>
+          <span><span class="nome">${esc(r.descricao)}</span>
+          <div class="desc">${diaCurto(r.data)}${r.recorrencia === "mensal" ? " · todo mês" : ""}${
+            r.repetido ? " · repetida deste mês em diante" : ""}</div></span></span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <b class="pos">${money(r.valor)}</b>
+          ${r.repetido ? "" : `<button type="button" class="btn perigo mini" data-del-lanc="transactions:${r.id}">✕</button>`}
+        </span>
+      </div>`).join("")
+      : `<div class="vazio" style="padding:22px"><span class="em">💰</span>Nenhuma receita lançada em ${mesLabel(ym)}.
+         ${fixa > 0 ? `Vale a receita fixa de ${money(fixa)}.` : ""}</div>`;
 
-    $("#listaFaturas").innerHTML = fs.length ? fs.map((f) => {
-      const c = cards.find((x) => x.id === f.card_id);
-      return `<div class="linha">
-        <span class="esq"><span class="ico">📄</span>
-          <span><span class="nome">${mesLabel(f.ym)}</span>
-          <div class="desc">${esc(c ? c.nome : "cartão removido")} · ${f.qtd} lançamentos</div></span></span>
-        <span style="display:flex;align-items:center;gap:10px">
-          <b>${money(f.total)}</b>
-          <button class="btn perigo mini" data-del-fatura="${f.id}">✕</button>
+    $("#listaFora").innerHTML = fora.length ? fora.map((l) => {
+      const conta = l.col === "bills";
+      return `<div class="linha${conta && l.paga ? " paga" : ""}">
+        <span class="esq">
+          ${conta
+            ? `<button type="button" class="check${l.paga ? " on" : ""}" data-pagar="${l.id}:${ym}" aria-label="Marcar como paga">✓</button>`
+            : `<span class="ico">💵</span>`}
+          <span${conta ? ` class="tocavel" data-edit-conta="${l.id}:${ym}"` : ""}>
+            <span class="nome">${esc(l.descricao)}</span>
+            <div class="desc">${conta
+              ? (l.paga ? "pago em " + diaCurto(l.pagaEm) : "vence " + diaCurto(l.data))
+              : diaCurto(l.data)}${l.recorrencia === "mensal" ? " · todo mês" : ""}</div></span></span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <b>${money(l.valor)}</b>
+          ${l.repetido ? "" : `<button type="button" class="btn perigo mini" data-del-lanc="${l.col}:${l.id}">✕</button>`}
         </span>
       </div>`;
-    }).join("") : `<div class="vazio"><span class="em">📭</span>Nenhuma fatura importada ainda.</div>`;
+    }).join("")
+      : `<div class="vazio" style="padding:22px"><span class="em">🧾</span>Nada fora do cartão em ${mesLabel(ym)}.</div>`;
 
-    $("#listaCartoes").innerHTML = cards.length ? cards.map((c) => `
-      <div class="linha">
-        <span class="esq"><span class="ico">💳</span>
-          <span><span class="nome">${esc(c.nome)}</span>
-          <div class="desc">fecha dia ${c.dia_fechamento || "—"} · vence dia ${c.dia_vencimento || "—"}</div></span></span>
-        <button class="btn perigo mini" data-del-cartao="${c.id}">✕</button>
-      </div>`).join("") : `<div class="vazio" style="padding:20px">Nenhum cartão.</div>`;
+    $("#notaFora").textContent = fora.length
+      ? "Contas a pagar têm a bolinha para marcar como pagas; toque no nome para corrigir valor ou vencimento."
+      : "Aqui entra o que não passa na fatura: aluguel, boleto, PIX, débito e dinheiro.";
+
+    // Receita fixa
+    $("#rendaBox").innerHTML = `
+      <div class="campo" style="margin-bottom:10px">
+        <label>Quanto entra todo mês, já líquido</label>
+        <input type="number" id="inRenda" inputmode="decimal" step="0.01" placeholder="0,00"
+          value="${fixa > 0 ? fixa : ""}">
+      </div>
+      <button type="button" class="btn sec" id="btnRenda">Salvar receita fixa</button>
+      <p class="dica">${temMensal
+        ? "Você já lançou receita marcada como <b>todo mês</b>, então este campo deixou de contar — o valor do mês vem das receitas lançadas."
+        : "É o atalho de quem só tem salário: um número que vale para todos os meses. Receitas lançadas acima somam a ele."}</p>`;
   }
 
-  function renderFixos() {
-    const recs = recorrentesCartao();
-    const maior = Math.max(...recs.map((r) => r.valor), 1);
-    $("#listaRecorrentes").innerHTML = recs.length ? recs.map((r) => `
-      <div class="linha" style="align-items:flex-start">
-        <span class="esq" style="flex:1">
-          <span style="flex:1;min-width:0">
-            <span class="nome">${esc(nomeBonito(r.descricao))}</span>
-            <div class="desc">${money(r.valor)} por mês${r.vezes >= 2 ? ` · visto em ${r.vezes} faturas` : ""}${r.marcada ? "" : " · sugestão"}</div>
-            <div class="item-barra"><i style="width:${((r.valor / maior) * 100).toFixed(1)}%"></i></div>
-          </span>
-        </span>
-        <label class="chave"><input type="checkbox" data-rec="${esc(r.chave)}" ${r.marcada ? "checked" : ""}><i></i></label>
-      </div>`).join("") : `<div class="vazio"><span class="em">🔁</span>Nenhuma cobrança recorrente encontrada. Importe uma fatura.</div>`;
-
+  // ---------- Lançamentos: uma lista só ----------
+  function lancamentosDoMes(ym) {
+    const out = [];
+    ocorrenciasMensais(Store.allSync("transactions"), ym).forEach((t) => {
+      if (t.tipo !== "despesa") return;      // receita tem tela própria, a aba Conta
+      const cartao = ehCartao(t);
+      out.push({
+        col: "transactions", id: t.id, desc: t.descricao, valor: +t.valor || 0, data: t.data,
+        ico: t.estorno ? "↩️" : t.parcela ? "📆" : cartao ? (t.recorrencia === "mensal" ? "🔁" : "💳") : "💵",
+        tag: t.estorno ? "estorno" : t.parcela ? "parcela " + t.parcela
+          : t.recorrencia === "mensal" ? "todo mês" : cartao ? "cartão" : "fora do cartão",
+        apagavel: !t.repetido && !t.projecao,
+        futuro: !!t.projecao
+      });
+    });
+    contasDoMes(ym).forEach((c) => out.push({
+      col: "bills", id: c.id, desc: c.descricao, valor: c.valor, data: c.venc,
+      ico: c.paga ? "✅" : "🧾",
+      tag: c.paga ? "conta paga" : "conta a pagar",
+      apagavel: true, futuro: false
+    }));
+    return out.sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")));
   }
 
-  // ---------- Fora do cartão ----------
-  // Tela própria porque é a única coisa que você digita: tudo o mais chega
-  // pela fatura. O total aparece junto do total do mês, para ficar claro
-  // que ele NÃO é uma lista à parte — ele soma no gasto do mês.
-  function renderFora() {
+  function renderLancamentos() {
     const ym = mesAtivo();
-    const fora = foraDoMes(ym);
-    const total = fora.reduce((s, l) => s + l.valor, 0);
-    const mes = fatias(ym, null);
+    let lista = lancamentosDoMes(ym);
+    const q = busca.trim().toLowerCase();
+    if (q) {
+      lista = lista.filter((l) =>
+        (l.desc + " " + nomeBonito(l.desc)).toLowerCase().indexOf(q) >= 0);
+    }
+    const total = lista.reduce((s, l) => s + l.valor, 0);
+    const mostrar = verTudo ? lista : lista.slice(0, LISTA_INICIAL);
 
-    $("#listaFora").innerHTML = fora.length ? fora.map((l) => `
+    $("#listaLanc").innerHTML = mostrar.length ? mostrar.map((l) => `
       <div class="linha">
-        <span class="esq"><span class="ico">${l.recorrencia === "mensal" ? "🔁" : "•"}</span>
-          <span><span class="nome">${esc(l.descricao)}</span>
-          <div class="desc">${l.recorrencia === "mensal" ? "todo mês" : "só em " + mesLabel(ym)}${l.data ? " · dia " + String(l.data).slice(8, 10) : ""}</div></span></span>
-        <span style="display:flex;align-items:center;gap:10px">
-          <b>${money(l.valor)}</b>
-          ${l.repetido ? "" : `<button class="btn perigo mini" data-del-fora="${l.col}:${l.id}">✕</button>`}
+        <span class="esq"><span class="ico">${l.ico}</span>
+          <span><span class="nome">${esc(nomeBonito(l.desc))}</span>
+          <div class="desc">${l.data ? diaCurto(l.data) + " · " : ""}${l.tag}</div></span></span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <b class="${l.valor < 0 ? "pos" : ""}">${money(l.valor)}</b>
+          ${l.apagavel ? `<button class="btn perigo mini" data-del-lanc="${l.col}:${l.id}">✕</button>` : ""}
         </span>
-      </div>`).join("") : `<div class="vazio"><span class="em">🧾</span>Nada lançado fora do cartão em ${mesLabel(ym)}.</div>`;
+      </div>`).join("")
+      : `<div class="vazio"><span class="em">🔎</span>${q ? "Nada com esse nome em " + mesLabel(ym) + "."
+        : "Nada lançado em " + mesLabel(ym) + " ainda."}</div>`;
 
-    $("#foraTotal").innerHTML = total > 0 ? `
-      <div class="aviso" style="margin:14px 0 0">
-        <b>${money(total)}</b> fora do cartão em ${mesLabel(ym)}.
-        <br>Já está somado no gasto do mês, que é de <b>${money(mes.total)}</b>.
-      </div>` : "";
+    $("#lancTotal").innerHTML = `
+      ${lista.length > mostrar.length
+        ? `<button class="btn sec" data-acao="ver-tudo" style="margin-top:12px">Mostrar os outros ${lista.length - mostrar.length}</button>`
+        : ""}
+      ${lista.length ? `<div class="aviso" style="margin-top:12px">
+        <b>${money(total)}</b> em ${lista.length} lançamento${lista.length > 1 ? "s" : ""} de ${mesLabel(ym)}.</div>` : ""}`;
+  }
+
+  // ---------- Futuro ----------
+  // Os números do alto da tela: o que já está comprometido daqui para a
+  // frente, o mês que aperta mais e até quando as parcelas pesam.
+  function painelFuturo(serie, r) {
+    const comprometido = serie.reduce((t, m) => t + m.fixos + m.parcelas + m.recorrentes, 0);
+    // A renda pode mudar de mês para mês (13º, aluguel recebido, um extra),
+    // então o mês mais apertado é o de menor sobra, não o de maior gasto.
+    const sobraDe = (m) => renda(m.ym) - m.total;
+    const pior = serie.reduce((a, m) => (sobraDe(m) < sobraDe(a) ? m : a), serie[0]);
+    const comParcela = serie.filter((m) => m.parcelas > 0);
+    const fim = comParcela.length ? comParcela[comParcela.length - 1] : null;
+    const saldoParcelas = Store.allSync("transactions")
+      .filter((t) => t.projecao && t.parcela && String(t.data).slice(0, 7) >= serie[0].ym)
+      .reduce((t, x) => t + (+x.valor || 0), 0);
+    const negativos = serie.filter((m) => renda(m.ym) > 0 && m.total > renda(m.ym)).length;
+    return { comprometido, pior, fim, saldoParcelas, negativos };
   }
 
   function renderFuturo() {
@@ -486,10 +661,57 @@
     const wrap = $("#grafico");
 
     if (!serie.some((m) => m.total > 0)) {
-      wrap.innerHTML = `<div class="vazio"><span class="em">📊</span>Importe a fatura para ver os próximos meses.</div>`;
+      wrap.innerHTML = `<div class="vazio"><span class="em">📊</span>Importe a fatura ou lance um gasto para ver os próximos meses.</div>`;
+      $("#dashKpis").innerHTML = "";
+      $("#tabelaPrev").innerHTML = `<div class="vazio" style="padding:22px">Sem nada para projetar ainda.</div>`;
+      $("#notaPrev").textContent = "";
       $("#listaParcelas").innerHTML = "";
+      $("#listaRecorrentes").innerHTML = "";
       return;
     }
+
+    // ---------- Os cartões do dash ----------
+    const k = painelFuturo(serie, r);
+    const piorSobra = renda(k.pior.ym) - k.pior.total;
+    $("#dashKpis").innerHTML = `
+      <div class="kpi">
+        <div class="rot">Comprometido em ${serie.length} meses</div>
+        <div class="val">${money(k.comprometido)}</div>
+        <div class="nota">parcelas, assinaturas e contas fixas, sem contar o gasto do dia a dia</div>
+      </div>
+      <div class="kpi">
+        <div class="rot">Mês mais apertado</div>
+        <div class="val">${mesLabel(k.pior.ym)}</div>
+        <div class="nota ${r > 0 && piorSobra < 0 ? "mal" : ""}">${r > 0
+          ? (piorSobra < 0 ? `faltam ${money(-piorSobra)} para fechar o mês` : `sobra ${money(piorSobra)}`)
+          : "informe a receita para saber quanto sobra"}</div>
+      </div>
+      <div class="kpi">
+        <div class="rot">Parcelas ainda a pagar</div>
+        <div class="val">${money(k.saldoParcelas)}</div>
+        <div class="nota">${k.fim ? `a última cai em ${mesLabel(k.fim.ym)}` : "nenhuma parcela em aberto"}</div>
+      </div>`;
+
+    // ---------- A tabela mês a mês ----------
+    $("#tabelaPrev").innerHTML = `
+      <div class="prevwrap"><table class="prev">
+        <thead><tr><th>Mês</th><th>Comprometido</th><th>Gasto livre</th><th>${r > 0 ? "Sobra" : "Total"}</th></tr></thead>
+        <tbody>${serie.map((m) => {
+          const comp = m.fixos + m.parcelas + m.recorrentes;
+          const sobra = renda(m.ym) - m.total;
+          return `<tr>
+            <td>${mesLabel(m.ym)}</td>
+            <td class="n">${money(comp)}</td>
+            <td class="n dim">${money(m.variavel)}</td>
+            <td class="n ${r > 0 ? (sobra < 0 ? "mal" : "bem") : ""}">${money(r > 0 ? sobra : m.total)}</td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table></div>`;
+    const refMes = mesLabel((refVariavel || serie[0]).ym);
+    $("#notaPrev").textContent = (r > 0 && k.negativos
+      ? `${k.negativos} ${k.negativos === 1 ? "mês fecha" : "meses fecham"} no vermelho se nada mudar. `
+      : "Comprometido é o que já está contratado. ")
+      + `O gasto livre é estimativa: repete o nível de ${refMes}.`;
 
     const FAIXAS = [
       { k: "fixos", cor: "#8b8ba3", nome: "Fora do cartão" },
@@ -530,7 +752,7 @@
           stroke-dasharray="3 3" rx="3"><title>Outro cenário: ${money(alvo)}</title></rect>`;
       }
       corpo += `<text x="${cx.toFixed(1)}" y="${(y(Math.max(m.total, alvo)) - 7).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="800" fill="currentColor">${curto(m.total)}</text>`;
-      const sobra = r - m.total;
+      const sobra = renda(m.ym) - m.total;
       base += `<text x="${cx.toFixed(1)}" y="${H - 30}" text-anchor="middle" font-size="9.5" font-weight="600" fill="currentColor" opacity=".6">${mesLabel(m.ym).split(".")[0]}</text>`;
       if (r > 0) base += `<text x="${cx.toFixed(1)}" y="${H - 14}" text-anchor="middle" font-size="10" font-weight="800" fill="${sobra < 0 ? "#d92d54" : "#0f9d58"}">${sobra < 0 ? "−" : "+"}${curto(sobra)}</text>`;
     });
@@ -548,7 +770,7 @@
       </svg></div>
       <div class="legenda">${FAIXAS.map((f) => `<span><i style="background:${f.cor}"></i>${f.nome}</span>`).join("")}
         <span><i style="background:none;border:1px dashed rgba(255,255,255,.45)"></i>Outro cenário</span></div>
-      <p class="dica">Parcelas e recorrentes são valores reais da fatura. O gasto livre é estimativa: repete o nível de ${mesLabel(mesAtivo())}.</p>`;
+      <p class="dica">Parcelas, recorrentes e contas são valores reais. O gasto livre é estimativa: repete o nível de ${mesLabel((refVariavel || serie[0]).ym)}.</p>`;
 
     // Quando cada parcela acaba
     const porSerie = {};
@@ -562,35 +784,99 @@
       if (ym > g.ultima) { g.ultima = ym; g.i = i; }
       if (t.projecao) g.falta++;
     });
-    const lista = Object.values(porSerie).sort((a, b) => a.ultima.localeCompare(b.ultima));
+    // Parcelamento que já acabou não é futuro: sai da lista. Fica o que
+    // ainda pesa deste mês em diante, do que acaba primeiro ao que acaba
+    // por último.
+    const lista = Object.values(porSerie)
+      .filter((p) => p.ultima >= mesAtivo())
+      .sort((a, b) => a.ultima.localeCompare(b.ultima));
     $("#listaParcelas").innerHTML = lista.length ? lista.map((p) => `
       <div class="linha">
         <span class="esq"><span class="ico">📆</span>
           <span><span class="nome">${esc(nomeBonito(p.nome))}</span>
           <div class="desc">${money(p.valor)} × ${p.total} · termina em ${mesLabel(p.ultima)}</div></span></span>
         <b>${p.falta ? p.falta + " a pagar" : "última"}</b>
-      </div>`).join("") : `<div class="vazio" style="padding:22px">Nenhuma compra parcelada.</div>`;
+      </div>`).join("") : `<div class="vazio" style="padding:22px">Nenhuma parcela em aberto.</div>`;
+
+    // O que se repete todo mês
+    const recs = recorrentesCartao();
+    const maior = Math.max(...recs.map((x) => x.valor), 1);
+    $("#listaRecorrentes").innerHTML = recs.length ? recs.map((x) => `
+      <div class="linha" style="align-items:flex-start">
+        <span class="esq" style="flex:1">
+          <span style="flex:1;min-width:0">
+            <span class="nome">${esc(nomeBonito(x.descricao))}</span>
+            <div class="desc">${money(x.valor)} por mês${x.vezes >= 2 ? ` · visto em ${x.vezes} faturas` : ""}${x.marcada ? "" : " · sugestão"}</div>
+            <div class="item-barra"><i style="width:${((x.valor / maior) * 100).toFixed(1)}%"></i></div>
+          </span>
+        </span>
+        <label class="chave"><input type="checkbox" data-rec="${esc(x.chave)}" ${x.marcada ? "checked" : ""}><i></i></label>
+      </div>`).join("") : `<div class="vazio" style="padding:22px">Nada se repetindo ainda. Importe uma fatura.</div>`;
   }
 
   // ---------- Importar fatura ----------
+  // Do arquivo, seja PDF ou texto.
   async function importar(file) {
     const st = $("#fatStatus");
-    const card = Store.allSync("cards").find((c) => c.id === $("#fatCard").value);
-    if (!card) { st.innerHTML = `<div class="aviso ruim">Escolha o cartão.</div>`; return; }
     st.innerHTML = `<div class="aviso">⏳ Lendo ${esc(file.name)}…</div>`;
     try {
-      const linhas = await FC.Fatura.lerLinhas(file);
-      const res = FC.Fatura.analisar(linhas, $("#fatMes").value || hoje().slice(0, 7));
-      $("#fatMesCx").classList.toggle("hidden", !!res.competenciaDetectada);
-      if (!res.competenciaDetectada) {
-        st.innerHTML = `<div class="aviso atencao">Não achei o vencimento no PDF. Informe a competência acima e mande de novo.</div>`;
+      await importarLinhas(await FC.Fatura.lerArquivo(file));
+    } catch (e) {
+      st.innerHTML = `<div class="aviso ruim">Erro ao ler o arquivo: ${esc(e.message)}</div>`;
+    }
+    const inp = $("#fatFile");
+    if (inp) inp.value = "";
+  }
+
+  // Do texto colado: dá para copiar a fatura do aplicativo do banco e jogar
+  // aqui, sem baixar PDF nenhum.
+  async function importarTexto() {
+    const st = $("#fatStatus");
+    const cx = $("#fatTexto");
+    const linhas = FC.Fatura.linhasDeTexto(cx ? cx.value : "");
+    if (linhas.length < 2) {
+      st.innerHTML = `<div class="aviso atencao">Cole o texto da fatura na caixa acima, uma linha por lançamento.</div>`;
+      return;
+    }
+    st.innerHTML = `<div class="aviso">⏳ Lendo ${linhas.length} linhas…</div>`;
+    try {
+      await importarLinhas(linhas);
+    } catch (e) {
+      st.innerHTML = `<div class="aviso ruim">Erro ao ler o texto: ${esc(e.message)}</div>`;
+    }
+  }
+
+  async function importarLinhas(linhas) {
+    const st = $("#fatStatus");
+    let card = Store.allSync("cards").find((c) => c.id === ($("#fatCard") || {}).value);
+    if (!card) card = await cartaoPadrao();
+    {
+      if (linhas.length < 3) {
+        st.innerHTML = `<div class="aviso ruim">Não achei texto neste arquivo. Se for um PDF escaneado
+          (uma foto da fatura), ele não tem texto para ler — use o PDF que o banco gera, ou cole o texto.</div>`;
         return;
       }
+      const res = FC.Fatura.analisar(linhas, ($("#fatMes") || {}).value || hoje().slice(0, 7));
       if (!res.itens.length) {
-        st.innerHTML = `<div class="aviso ruim">Não encontrei compras neste PDF.</div>`;
+        st.innerHTML = `<div class="aviso ruim">Li o arquivo mas não reconheci nenhuma compra.
+          Cada lançamento precisa começar com a data, como <b>09/08 POSTO SHELL 210,40</b>.</div>`;
         return;
       }
+      // Mês não escrito na fatura não trava mais a importação: o app decide
+      // pelo mês da compra mais recente, importa, e diz qual usou. O campo
+      // fica à mostra para corrigir e mandar de novo, se for o caso.
+      const campoMes = $("#fatMesCx");
+      if (campoMes) campoMes.classList.toggle("hidden", !!res.competenciaDetectada);
+      const campoMesInput = $("#fatMes");
+      if (campoMesInput && !campoMesInput.value) campoMesInput.value = res.competencia;
       const comp = res.competencia;
+      // O dia digitado na folha manda e fica guardado no cartão: quando o
+      // arquivo não traz o vencimento, é ele que põe as parcelas no dia certo.
+      const diaDigitado = parseInt(($("#fatDia") || {}).value, 10);
+      if (diaDigitado >= 1 && diaDigitado <= 31 && diaDigitado !== card.dia_vencimento) {
+        await Store.update("cards", card.id, { dia_vencimento: diaDigitado });
+        card = { ...card, dia_vencimento: diaDigitado };
+      }
       const diaVenc = FC.Fatura.diaVencimento(card, res.vencimento);
       const lancs = FC.Fatura.expandir(res.itens, {
         competencia: comp, card_id: card.id, dia_venc: diaVenc,
@@ -620,19 +906,35 @@
 
       const fut = lancs.filter((l) => l.projecao).length;
       const rec = lancs.filter((l) => l.recorrente).length;
-      st.innerHTML = `<div class="aviso bom">✅ <b>${mesLabel(comp)}</b> lançada — ${lancs.length - fut} do mês${
+      const semData = res.competenciaOrigem !== "fatura";
+      st.innerHTML = `<div class="aviso ${semData ? "atencao" : "bom"}">${semData ? "⚠️" : "✅"}
+        <b>${mesLabel(comp)}</b> lançada — ${lancs.length - fut} do mês${
         fut ? `, ${fut} parcelas nos meses seguintes` : ""}${rec ? `, ${rec} recorrentes` : ""}.
         ${bate ? `<br>Confere com o total impresso: <b>${money(res.totalDeclarado)}</b>.`
-               : `<br>⚠️ Somei ${money(soma)}, o PDF diz ${money(res.totalDeclarado || 0)}. Confira os lançamentos.`}</div>`;
-      $("#fatFile").value = "";
+               : res.totalDeclarado
+                 ? `<br>⚠️ Somei ${money(soma)}, a fatura diz ${money(res.totalDeclarado)}. Confira os lançamentos.`
+                 : ""}
+        ${semData ? `<br>Não achei o vencimento escrito na fatura, então usei <b>${mesLabel(comp)}</b>,
+          ${res.competenciaOrigem === "compras" ? "o mês da compra mais recente" : "o mês do campo acima"}.
+          Se não for esse, corrija a competência acima e mande de novo.` : ""}</div>`;
+      const caixa = $("#fatTexto");
+      if (caixa) caixa.value = "";
+      mesSel = comp;
       render();
-    } catch (e) {
-      st.innerHTML = `<div class="aviso ruim">Erro ao ler o PDF: ${esc(e.message)}</div>`;
+      pintarFolhaImportar();
     }
   }
 
-  // Mantém no máximo MAX_FATURAS. A mais antiga sai inteira, com as
-  // projeções que ela tinha gerado.
+  // Sem cartão cadastrado não dá para lançar no cartão. Em vez de exigir um
+  // cadastro antes de qualquer coisa, o app cria um e segue. Sem dia de
+  // vencimento de propósito: assim vale o dia impresso em cada fatura, que
+  // é o certo, em vez de um número que ninguém escolheu.
+  async function cartaoPadrao() {
+    const cards = Store.allSync("cards");
+    if (cards.length) return cards[0];
+    return Store.add("cards", { nome: "Meu cartão", dia_fechamento: null, dia_vencimento: null });
+  }
+
   async function podarFaturas(protegida) {
     let fs = faturas();
     while (fs.length > MAX_FATURAS) {
@@ -650,43 +952,221 @@
       t.fatura_id === id || (t.projecao && t.card_id === card_id && String(t.fatura_id).split(":")[1] === ym));
     for (const t of alvo) await Store.remove("transactions", t.id);
     render();
+    pintarFolhaImportar();
   }
 
-  // ---------- Modal ----------
+  // ---------- Folhas (modal) ----------
   let modalTipo = null;
+  let modalCtx = null;
   const CAMPOS = {
-    cartao: [
-      { n: "nome", l: "Nome do cartão", t: "text", req: true },
-      { n: "dia_fechamento", l: "Dia que fecha", t: "number" },
-      { n: "dia_vencimento", l: "Dia que vence", t: "number" }
+    gasto: [
+      { n: "onde", l: "Onde passou", t: "seg",
+        o: [{ v: "cartao", t: "<span>💳</span> Cartão" }, { v: "fora", t: "<span>💵</span> Despesa" }] },
+      { n: "descricao", l: "O que foi", t: "text", req: true },
+      { n: "valor", l: "Valor (R$)", t: "number", req: true },
+      { n: "data", l: "Quando", t: "date", v: () => hoje() },
+      { n: "repete", l: "E nos meses seguintes?", t: "select",
+        o: [{ v: "nenhuma", t: "Não se repete, foi só desta vez" },
+            { v: "mensal", t: "Volta todo mês, sem prazo" },
+            { v: "parcelado", t: "É parcelado, tem fim" }] },
+      { n: "vezes", l: "Em quantas vezes", t: "number", v: () => 12, esconde: true,
+        dica: "O valor lá em cima é o de CADA parcela. As que faltam entram sozinhas nos meses seguintes e já contam na previsão." }
     ],
-    fora: [
+    receita: [
+      { n: "descricao", l: "De onde veio", t: "text", req: true },
+      { n: "valor", l: "Valor (R$)", t: "number", req: true },
+      { n: "data", l: "Quando entrou", t: "date", v: () => hoje() },
+      { n: "repete", l: "E nos meses seguintes?", t: "select",
+        o: [{ v: "mensal", t: "Entra todo mês" }, { v: "nenhuma", t: "Só desta vez" }] }
+    ],
+    conta: [
       { n: "descricao", l: "O que é", t: "text", req: true },
       { n: "valor", l: "Valor (R$)", t: "number", req: true },
-      { n: "vencimento", l: "Data", t: "date", v: () => hoje() },
+      { n: "vencimento", l: "Vence em", t: "date", v: () => hoje() },
       { n: "recorrencia", l: "Repete todo mês?", t: "select",
-        o: [{ v: "mensal", t: "Sim, todo mês" }, { v: "nenhuma", t: "Não, só neste" }] }
+        o: [{ v: "mensal", t: "Sim, todo mês" }, { v: "nenhuma", t: "Não, só neste mês" }] }
     ]
   };
+  const TITULOS = { gasto: "Lançar gasto", receita: "Lançar receita",
+    conta: "Nova conta a pagar", importar: "Importar" };
 
-  function abrirModal(tipo) {
-    modalTipo = tipo;
-    $("#modalTit").textContent = tipo === "cartao" ? "Novo cartão" : "Despesa fora do cartão";
-    $("#modalForm").innerHTML = CAMPOS[tipo].map((c) => {
-      if (c.t === "select") {
-        return `<div class="campo"><label>${c.l}</label><select name="${c.n}">${
-          c.o.map((o) => `<option value="${o.v}">${o.t}</option>`).join("")}</select></div>`;
-      }
-      const val = c.v ? ` value="${c.v()}"` : "";
-      return `<div class="campo"><label>${c.l}</label><input name="${c.n}" type="${c.t}"${val}${c.t === "number" ? ' inputmode="decimal" step="0.01"' : ""}></div>`;
-    }).join("");
-    $("#modal").classList.add("on");
+  function campoHtml(c) {
+    const dica = c.dica ? `<p class="dica" data-de="${c.n}">${c.dica}</p>` : "";
+    const oculto = c.esconde ? " hidden" : "";
+    if (c.t === "seg") {
+      // Dois grupos à mostra, em vez de um menu que esconde a segunda opção:
+      // é a primeira decisão do lançamento e ela muda o resto da folha.
+      return `<div class="seg" data-campo="${c.n}"${oculto}>${
+        c.o.map((o, i) => `<button type="button" data-seg="${c.n}" data-valor="${o.v}"${
+          i === 0 ? ' class="on"' : ""}>${o.t}</button>`).join("")}
+        <input type="hidden" name="${c.n}" value="${c.o[0].v}"></div>${dica}`;
+    }
+    if (c.t === "select") {
+      return `<div class="campo" data-campo="${c.n}"${oculto}><label>${c.l}</label><select name="${c.n}">${
+        c.o.map((o) => `<option value="${o.v}">${o.t}</option>`).join("")}</select></div>${dica}`;
+    }
+    const val = c.v ? ` value="${c.v()}"` : "";
+    return `<div class="campo" data-campo="${c.n}"${oculto}><label>${c.l}</label><input name="${c.n}" type="${c.t}"${val}${
+      c.t === "number" ? ' inputmode="decimal" step="0.01"' : ""}></div>${dica}`;
   }
-  function fecharModal() { $("#modal").classList.remove("on"); modalTipo = null; }
 
-  // Trava contra gravação em dobro. No celular o toque duplo acontece, e
-  // sem isto a mesma despesa entrava duas vezes — o total do mês subia o
-  // dobro e só se percebia depois, conferindo item a item.
+  // Clique num grupo: acende o botão, guarda o valor no campo escondido e
+  // avisa quem depende dele (a ajuda do rodapé muda com o grupo).
+  function ligaSegmentos() {
+    $$('#modalForm [data-seg]').forEach((b) => {
+      b.addEventListener("click", () => {
+        const campo = b.closest(".seg");
+        $$("button", campo).forEach((x) => x.classList.toggle("on", x === b));
+        campo.querySelector("input").value = b.dataset.valor;
+        pintaAjudaGasto();
+      });
+    });
+  }
+
+  // A mesma folha serve para os dois grupos, então o rodapé diz o que cada
+  // um significa — senão "Fora do cartão" vira adivinhação.
+  function pintaAjudaGasto() {
+    const campo = $('#modalForm [name="onde"]');
+    const ajuda = $("#ajudaGasto");
+    if (!campo || !ajuda) return;
+    ajuda.innerHTML = campo.value === "cartao"
+      ? "Compra que vai <b>cair na fatura</b> do cartão. Some ao gasto do mês do vencimento."
+      : "O que sai da conta sem passar no cartão: <b>boleto, PIX, débito ou dinheiro</b>. Aparece também na aba Conta.";
+  }
+
+  // "Em quantas vezes" só aparece quando a despesa é parcelada.
+  function ligaRepete() {
+    const sel = $('#modalForm [name="repete"]');
+    if (!sel) return;
+    const mostra = () => {
+      const parcelado = sel.value === "parcelado";
+      const campo = $('#modalForm [data-campo="vezes"]');
+      const dica = $('#modalForm [data-de="vezes"]');
+      if (campo) campo.hidden = !parcelado;
+      if (dica) dica.hidden = !parcelado;
+    };
+    sel.addEventListener("change", mostra);
+    mostra();
+  }
+
+  function abrirModal(tipo, ctx) {
+    modalTipo = tipo;
+    modalCtx = ctx || null;
+    $("#modalTit").textContent = (ctx && ctx.id ? "Editar conta" : TITULOS[tipo]) || "Novo";
+    if (tipo === "gasto" && ctx && ctx.onde === "fora") $("#modalTit").textContent = "Lançar despesa";
+    $("#modalBtns").classList.toggle("hidden", tipo === "importar");
+    if (tipo === "importar") {
+      $("#modalForm").innerHTML = folhaImportarHtml();
+      pintarFolhaImportar();
+    } else {
+      let campos = CAMPOS[tipo];
+      // Editando uma conta que se repete: o valor da luz muda todo mês, então
+      // o app pergunta se a mudança é só deste mês ou de todos.
+      if (tipo === "conta" && ctx && ctx.id && ctx.recorrencia === "mensal") {
+        campos = campos.concat([{ n: "escopo", l: "Este valor vale para", t: "select",
+          o: [{ v: "mes", t: "Só " + mesLabel(ctx.ym) }, { v: "todos", t: "Todos os meses" }] }]);
+      }
+      $("#modalForm").innerHTML = campos.map(campoHtml).join("")
+        + (tipo === "gasto" ? `<p class="dica" id="ajudaGasto"></p>` : "");
+      if (ctx && ctx.onde) {
+        const onde = $('#modalForm [name="onde"]');
+        if (onde) onde.value = ctx.onde;
+        $$('#modalForm [data-seg]').forEach((b) =>
+          b.classList.toggle("on", b.dataset.valor === ctx.onde));
+      }
+      ligaSegmentos();
+      pintaAjudaGasto();
+      ligaRepete();
+      if (ctx && ctx.valores) {
+        Object.keys(ctx.valores).forEach((k) => {
+          const el = $(`#modalForm [name="${k}"]`);
+          if (el) el.value = ctx.valores[k];
+        });
+      }
+    }
+    $("#modal").classList.add("on");
+    const p = $("#modalForm input");
+    if (p && tipo !== "importar") setTimeout(() => p.focus(), 60);
+  }
+  function fecharModal() { $("#modal").classList.remove("on"); modalTipo = null; modalCtx = null; }
+
+  function folhaImportarHtml() {
+    return `
+      <p class="dica" style="margin:0 0 12px">Mande a fatura em PDF ou em texto: as compras entram no mês do
+        vencimento e as parcelas que faltam se espalham sozinhas pelos meses seguintes.</p>
+      <div class="campo"><label>Cartão</label><select id="fatCard"></select></div>
+      <div class="campo"><label>Dia do vencimento da fatura</label>
+        <input type="number" id="fatDia" min="1" max="31" inputmode="numeric" placeholder="ex.: 21"></div>
+      <div class="campo hidden" id="fatMesCx"><label>Competência (não achei na fatura)</label>
+        <input type="month" id="fatMes"></div>
+      <input type="file" id="fatFile" accept=".pdf,.txt,.csv,text/plain,text/csv,application/pdf" class="arquivo">
+      <div style="margin-top:12px"><label class="btn" for="fatFile">Escolher arquivo (PDF ou TXT)</label></div>
+
+      <div class="campo" style="margin-top:14px">
+        <label>Ou cole aqui o texto da fatura</label>
+        <textarea id="fatTexto" rows="5" placeholder="21/07 POSTO SHELL 210,40&#10;22/07 IFOOD 54,90&#10;23/07 SEPHORA PARC 08/10 69,20"></textarea>
+      </div>
+      <div style="margin-top:10px"><button type="button" class="btn sec" id="btnTexto">Ler o texto colado</button></div>
+      <p class="dica">Uma linha por lançamento, começando pela data. Serve o que você copia do aplicativo
+        do banco ou do extrato em .txt.</p>
+      <div id="fatStatus" style="margin-top:10px"></div>
+
+      <p class="grupo-tit" style="margin-top:22px">Faturas já importadas</p>
+      <div class="card"><div id="listaFaturas"></div></div>
+
+      <p class="grupo-tit" style="margin-top:22px">Trazer de fora</p>
+      <div class="card pad">
+        <p class="dica" style="margin:0 0 12px">O arquivo <b>painel-fatura-*.html</b>, o .json exportado dele
+          ou uma cópia deste app. Nada é apagado: o que já está aqui é pulado.</p>
+        <input type="file" id="migFile" accept=".html,.htm,.json" class="arquivo">
+        <div class="btn-linha" style="margin:0">
+          <label class="btn sec" for="migFile">Escolher arquivo</label>
+          <button type="button" class="btn sec" id="btnMigNav">Procurar no navegador</button>
+        </div>
+        <div id="migStatus" style="margin-top:10px"></div>
+      </div>
+
+      <p class="grupo-tit" style="margin-top:22px">Cópia de segurança</p>
+      <div class="card pad">
+        <p class="dica" style="margin:0 0 12px">Guarda tudo num arquivo .json. Vale fazer de vez em quando:
+          limpar os dados do navegador apaga o que está aqui.</p>
+        <button type="button" class="btn sec" id="btnBackup">Baixar meus dados</button>
+      </div>`;
+  }
+
+  function pintarFolhaImportar() {
+    if (modalTipo !== "importar") return;
+    const cards = Store.allSync("cards");
+    const sel = $("#fatCard");
+    if (sel) {
+      const atual = sel.value;
+      sel.innerHTML = cards.map((c) => `<option value="${c.id}">${esc(c.nome)}</option>`).join("")
+        || `<option value="">Meu cartão (será criado)</option>`;
+      if (atual && cards.some((c) => c.id === atual)) sel.value = atual;
+    }
+    const dia = $("#fatDia");
+    if (dia && !dia.value) {
+      const c = cards.find((x) => x.id === (sel ? sel.value : "")) || cards[0];
+      if (c && c.dia_vencimento) dia.value = c.dia_vencimento;
+    }
+    const fs = faturas();
+    const lf = $("#listaFaturas");
+    if (lf) {
+      lf.innerHTML = fs.length ? fs.map((f) => {
+        const c = cards.find((x) => x.id === f.card_id);
+        return `<div class="linha">
+          <span class="esq"><span class="ico">📄</span>
+            <span><span class="nome">${mesLabel(f.ym)}</span>
+            <div class="desc">${esc(c ? c.nome : "cartão removido")} · ${f.qtd} lançamentos</div></span></span>
+          <span style="display:flex;align-items:center;gap:8px"><b>${money(f.total)}</b>
+            <button type="button" class="btn perigo mini" data-del-fatura="${f.id}">✕</button></span>
+        </div>`;
+      }).join("") : `<div class="vazio" style="padding:20px">Nenhuma fatura importada ainda.</div>`;
+    }
+  }
+
+  // Trava contra gravação em dobro: no celular o toque duplo acontece, e sem
+  // isto a mesma despesa entrava duas vezes.
   let salvando = false;
 
   async function salvarModal() {
@@ -694,9 +1174,8 @@
     salvando = true;
     const botao = $('.modal [data-acao="salvar"]');
     if (botao) { botao.disabled = true; botao.textContent = "Salvando…"; }
-    try {
-      await gravarModal();
-    } finally {
+    try { await gravarModal(); }
+    finally {
       salvando = false;
       if (botao) { botao.disabled = false; botao.textContent = "Salvar"; }
     }
@@ -704,75 +1183,217 @@
 
   async function gravarModal() {
     const d = {};
-    $$("#modalForm input,#modalForm select").forEach((i) => { d[i.name] = i.value; });
-    if (modalTipo === "cartao") {
-      if (!d.nome) return alert("Dê um nome ao cartão.");
-      await Store.add("cards", {
-        nome: d.nome,
-        dia_fechamento: parseInt(d.dia_fechamento, 10) || null,
-        dia_vencimento: parseInt(d.dia_vencimento, 10) || null
+    $$("#modalForm input,#modalForm select").forEach((i) => { if (i.name) d[i.name] = i.value; });
+
+    if (modalTipo === "gasto") {
+      if (!d.descricao || !d.valor) return alert("Preencha o que foi e o valor.");
+      const rep = d.repete || "nenhuma";
+      const data = d.data || hoje();
+      const base = {
+        descricao: d.descricao.trim(), valor: parseFloat(d.valor) || 0, tipo: "despesa",
+        data, category_id: null, recorrencia: rep === "mensal" ? "mensal" : "nenhuma"
+      };
+      if (d.onde === "cartao") {
+        const card = await cartaoPadrao();
+        base.forma = "cartao";
+        base.card_id = card.id;
+      } else {
+        base.forma = "manual";
+      }
+
+      if (rep === "parcelado") {
+        // Parcelado vira uma despesa por mês, com fim marcado. As dos meses
+        // à frente entram como projeção: contam na previsão e somem se a
+        // fatura daquele mês chegar com o valor real.
+        const n = Math.max(2, Math.min(72, parseInt(d.vezes, 10) || 2));
+        const ym0 = data.slice(0, 7);
+        const dia = +data.slice(8, 10);
+        for (let k = 1; k <= n; k++) {
+          const ym = Bl.ymAdd(ym0, k - 1);
+          await Store.add("transactions", {
+            ...base,
+            descricao: `${base.descricao} (${k}/${n})`,
+            data: ym + "-" + String(Math.min(dia, Bl.diasNoMes(ym))).padStart(2, "0"),
+            parcela: `${k}/${n}`,
+            projecao: k > 1
+          });
+        }
+      } else {
+        await Store.add("transactions", base);
+      }
+      mesSel = String(data).slice(0, 7);
+    } else if (modalTipo === "receita") {
+      if (!d.descricao || !d.valor) return alert("Preencha de onde veio e o valor.");
+      const data = d.data || hoje();
+      await Store.add("transactions", {
+        descricao: d.descricao.trim(), valor: parseFloat(d.valor) || 0, tipo: "receita",
+        forma: "manual", data, category_id: null,
+        recorrencia: d.repete === "mensal" ? "mensal" : "nenhuma"
       });
-    } else {
+      mesSel = String(data).slice(0, 7);
+    } else if (modalTipo === "conta") {
       if (!d.descricao || !d.valor) return alert("Preencha o que é e o valor.");
-      await Store.add("bills", {
-        descricao: d.descricao, valor: parseFloat(d.valor) || 0,
-        vencimento: d.vencimento || hoje(), recorrencia: d.recorrencia || "mensal",
-        pagas: {}, valores: {}
-      });
+      const valor = parseFloat(d.valor) || 0;
+      const rec = d.recorrencia || "mensal";
+      if (modalCtx && modalCtx.id) {
+        const b = Store.allSync("bills").find((x) => x.id === modalCtx.id);
+        if (b) {
+          const patch = { descricao: d.descricao.trim(), recorrencia: rec };
+          // Numa conta mensal, o vencimento guarda o PRIMEIRO mês. Mudar o dia
+          // não pode empurrar a conta para outro mês e sumir com o passado.
+          if (rec === "mensal") {
+            patch.vencimento = String(b.vencimento || hoje()).slice(0, 8) + String(d.vencimento || b.vencimento).slice(8, 10);
+          } else {
+            patch.vencimento = d.vencimento || b.vencimento;
+          }
+          const valores = { ...(b.valores || {}) };
+          if (rec === "mensal" && d.escopo !== "todos") {
+            valores[modalCtx.ym] = valor;          // só o mês da tela
+          } else {
+            patch.valor = valor;
+            delete valores[modalCtx.ym];           // o mês volta a seguir o padrão
+          }
+          patch.valores = valores;
+          await Store.update("bills", b.id, patch);
+        }
+      } else {
+        await Store.add("bills", {
+          descricao: d.descricao.trim(), valor,
+          vencimento: d.vencimento || hoje(), recorrencia: rec,
+          pagas: {}, valores: {}
+        });
+        mesSel = String(d.vencimento || hoje()).slice(0, 7);
+      }
     }
     fecharModal();
     render();
+  }
+
+  function baixarCopia() {
+    const nome = "fincontrol-" + hoje() + ".json";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(FC.Migrar.copia())],
+      { type: "application/json" }));
+    a.download = nome;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+
+  // ---------- Migração do painel antigo ----------
+  async function migrar(pacote, origem) {
+    const st = $("#migStatus");
+    if (!pacote) {
+      if (st) st.innerHTML = `<div class="aviso atencao">Não achei dados do painel ${origem === "nav" ? "neste navegador" : "nesse arquivo"}.</div>`;
+      return;
+    }
+    if (st) st.innerHTML = `<div class="aviso">⏳ Trazendo…</div>`;
+    try {
+      const c = await FC.Migrar.aplicar(pacote, {});
+      const plural = (n, um, muitos) => `${n} ${n === 1 ? um : muitos}`;
+      const partes = [];
+      if (c.cartao) partes.push(`${plural(c.cartao, "lançamento", "lançamentos")} do cartão `
+        + `(${plural(c.faturas, "fatura", "faturas")})`);
+      if (c.gastos) partes.push(`${plural(c.gastos, "gasto", "gastos")} fora do cartão`);
+      if (c.contas) partes.push(plural(c.contas, "conta", "contas"));
+      if (c.fixos) partes.push(plural(c.fixos, "conta mensal", "contas mensais"));
+      if (c.renda) partes.push("a receita mensal");
+      if (st) {
+        st.innerHTML = partes.length
+          ? `<div class="aviso bom">✅ Trouxe ${partes.join(", ")}.${c.pulados
+            ? `<br>${c.pulados === 1 ? "1 já existia aqui e foi pulado" : c.pulados + " já existiam aqui e foram pulados"}.` : ""}</div>`
+          : `<div class="aviso">Tudo o que estava lá já está aqui — ${c.pulados} ${c.pulados === 1 ? "item pulado" : "itens pulados"}.</div>`;
+      }
+      render();
+      pintarFolhaImportar();
+    } catch (e) {
+      if (st) st.innerHTML = `<div class="aviso ruim">Não consegui ler: ${esc(e.message)}</div>`;
+    }
   }
 
   // ---------- Eventos ----------
   function ligar() {
     $("#abas").addEventListener("click", (e) => {
       const b = e.target.closest("button[data-tela]");
-      if (b) { tela = b.dataset.tela; window.scrollTo(0, 0); render(); }
+      if (b) { tela = b.dataset.tela; verTudo = false; window.scrollTo(0, 0); render(); }
     });
 
     document.body.addEventListener("click", async (e) => {
       const ir = e.target.closest("[data-ir]");
-      if (ir) { tela = ir.dataset.ir; render(); return; }
+      if (ir) { tela = ir.dataset.ir; window.scrollTo(0, 0); render(); return; }
 
       const acao = e.target.closest("[data-acao]");
       if (acao) {
         const a = acao.dataset.acao;
-        if (a === "novo-cartao") abrirModal("cartao");
-        if (a === "nova-fora") abrirModal("fora");
+        if (a === "novo-gasto") abrirModal("gasto");
+        if (a === "nova-receita") abrirModal("receita");
+        if (a === "nova-despesa-fora") abrirModal("gasto", { onde: "fora" });
+        if (a === "nova-conta") abrirModal("conta");
+        if (a === "importar") abrirModal("importar");
+        if (a === "ver-tudo") { verTudo = true; render(); }
         if (a === "fechar") fecharModal();
         if (a === "salvar") salvarModal();
         return;
       }
+
       const mb = e.target.closest("[data-mes]");
-      if (mb) { mesSel = mb.dataset.mes; render(); return; }
+      if (mb) { mesSel = mb.dataset.mes; verTudo = false; render(); return; }
 
       const cen = e.target.closest("[data-cenario]");
       if (cen) { cenario = cen.dataset.cenario; render(); return; }
 
-      const df = e.target.closest("[data-del-fatura]");
-      if (df) { await apagarFatura(df.dataset.delFatura); return; }
-
-      const dc = e.target.closest("[data-del-cartao]");
-      if (dc) {
-        if (!confirm("Apagar o cartão e todos os lançamentos dele?")) return;
-        const id = dc.dataset.delCartao;
-        for (const t of Store.allSync("transactions").filter((t) => t.card_id === id)) {
-          await Store.remove("transactions", t.id);
-        }
-        await Store.remove("cards", id);
+      // Marcar conta como paga (ou desmarcar).
+      const pg = e.target.closest("[data-pagar]");
+      if (pg) {
+        const [id, ym] = pg.dataset.pagar.split(":");
+        const b = Store.allSync("bills").find((x) => x.id === id);
+        if (!b) return;
+        const pagas = { ...(b.pagas || {}) };
+        if (pagas[ym]) delete pagas[ym]; else pagas[ym] = hoje();
+        await Store.update("bills", id, { pagas });
         render();
         return;
       }
-      const dfo = e.target.closest("[data-del-fora]");
-      if (dfo) {
-        const [col, id] = dfo.dataset.delFora.split(":");
-        if (!confirm("Apagar esta despesa?")) return;
+
+      const ec = e.target.closest("[data-edit-conta]");
+      if (ec) {
+        const [id, ym] = ec.dataset.editConta.split(":");
+        const b = Store.allSync("bills").find((x) => x.id === id);
+        if (!b) return;
+        const o = Bl.ocorrencia(b, ym);
+        abrirModal("conta", { id, ym, recorrencia: b.recorrencia, valores: {
+          descricao: b.descricao, valor: o.valor, vencimento: o.venc, recorrencia: b.recorrencia
+        } });
+        return;
+      }
+
+      const dc = e.target.closest("[data-del-conta]");
+      if (dc) {
+        if (!confirm("Apagar esta conta? Some de todos os meses.")) return;
+        await Store.remove("bills", dc.dataset.delConta);
+        render();
+        return;
+      }
+
+      const dl = e.target.closest("[data-del-lanc]");
+      if (dl) {
+        const [col, id] = dl.dataset.delLanc.split(":");
+        if (!confirm("Apagar este lançamento?")) return;
         await Store.remove(col, id);
         render();
         return;
       }
-      if (e.target.id === "btnEscolher") $("#fatFile").click();
+
+      const df = e.target.closest("[data-del-fatura]");
+      if (df) { await apagarFatura(df.dataset.delFatura); return; }
+
+      if (e.target.id === "btnBackup") baixarCopia();
+      if (e.target.id === "btnMigArquivo") $("#migFile").click();   // reserva
+      // Os dois seletores de arquivo são <label for>, que abre a janela
+      // sozinho: input escondido com display:none nem sempre aceita o clique
+      // programado no celular, e era assim que o arquivo deixava de subir.
+      if (e.target.id === "btnTexto") await importarTexto();
+      if (e.target.id === "btnMigArquivo") $("#migFile").click();
+      if (e.target.id === "btnMigNav") await migrar(FC.Migrar.doNavegador(), "nav");
       if (e.target.id === "btnRenda") {
         const v = parseFloat($("#inRenda").value) || 0;
         const p = Store.allSync("prefs")[0];
@@ -782,23 +1403,53 @@
       }
     });
 
-    $("#fatFile").addEventListener("change", (e) => {
-      if (e.target.files[0]) importar(e.target.files[0]);
+    document.body.addEventListener("change", async (e) => {
+      if (e.target.id === "fatFile" && e.target.files[0]) { importar(e.target.files[0]); return; }
+      if (e.target.id === "migFile" && e.target.files[0]) {
+        const texto = await e.target.files[0].text();
+        e.target.value = "";
+        let pacote = null;
+        try { pacote = FC.Migrar.lerTexto(texto); } catch (err) { pacote = null; }
+        const vazio = !pacote || (!pacote.copia && !pacote.lanc.length && !pacote.contas.length
+          && !pacote.fx.length && !pacote.faturas.length && !pacote.renda);
+        await migrar(vazio ? null : pacote, "arquivo");
+        return;
+      }
+      // Interruptor de recorrente: vale para todos os lançamentos da série.
+      const sw = e.target.closest("[data-rec]");
+      if (sw) {
+        const chave = sw.dataset.rec;
+        const valor = sw.checked ? "mensal" : "nenhuma";
+        const alvo = Store.allSync("transactions").filter((t) =>
+          ehCartao(t) && !t.parcela && !t.projecao && chaveTxt(t.descricao) === chave);
+        for (const t of alvo) await Store.update("transactions", t.id, { recorrencia: valor });
+        render();
+      }
     });
 
-    // Interruptor de recorrente: vale para todos os lançamentos da série.
-    document.body.addEventListener("change", async (e) => {
-      const sw = e.target.closest("[data-rec]");
-      if (!sw) return;
-      const chave = sw.dataset.rec;
-      const valor = sw.checked ? "mensal" : "nenhuma";
-      const alvo = Store.allSync("transactions").filter((t) =>
-        ehCartao(t) && !t.parcela && !t.projecao && chaveTxt(t.descricao) === chave);
-      for (const t of alvo) await Store.update("transactions", t.id, { recorrencia: valor });
-      render();
+    document.body.addEventListener("input", (e) => {
+      if (e.target.id === "busca") {
+        busca = e.target.value;
+        verTudo = false;
+        renderLancamentos();
+      }
     });
 
     $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") fecharModal(); });
+  }
+
+  // Atalhos do ícone do app: segurar o ícone na tela de início abre direto
+  // em "Lançar gasto" ou na previsão.
+  function abrirAtalho() {
+    const alvo = (location.hash || "").replace("#", "");
+    if (!alvo) return;
+    history.replaceState(null, "", location.pathname + location.search);
+    if (alvo === "lancar") { abrirModal("gasto"); return; }
+    if (alvo === "receita") { tela = "conta"; render(); abrirModal("receita"); return; }
+    if (["futuro", "lancamentos", "conta", "mes"].indexOf(alvo) >= 0) {
+      tela = alvo;
+      render();
+    }
   }
 
   // ---------- Versão ----------
@@ -839,6 +1490,7 @@
 
     ligar();
     render();
+    abrirAtalho();
     window.addEventListener("fc:remote", render);
 
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
