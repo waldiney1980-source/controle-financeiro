@@ -2464,7 +2464,7 @@ FC.Migrar = (function () {
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v57";
+  const APP_VERSION = "v58";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -4673,11 +4673,41 @@ FC.Migrar = (function () {
     pintaOlho();
   }
 
+  // ---------- Versão publicada x versão aberta ----------
+  // App instalado abre pelo service worker, que pode entregar a versão
+  // guardada de ontem. Dava para ficar dias vendo um número velho sem saber.
+  // Aqui o app pergunta ao servidor qual é a versão publicada e, sendo outra,
+  // limpa o cache e recarrega uma vez só.
+  async function conferirVersao() {
+    if (!location.protocol.startsWith("http")) return;
+    try {
+      const html = await fetch("./index.html?ts=" + Date.now(), { cache: "no-store" }).then((r) => r.text());
+      const m = html.match(/js\/ui\.js\?v=(\d+)/);
+      if (!m) return;
+      const publicada = "v" + m[1];
+      if (publicada === APP_VERSION) return;
+      // Trava contra laço: tenta uma vez por versão publicada.
+      if (sessionStorage.getItem("fc_atualizando") === publicada) return;
+      sessionStorage.setItem("fc_atualizando", publicada);
+      avisar(`Atualizando para a <b>${publicada}</b>…`);
+      if ("serviceWorker" in navigator) {
+        const rs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(rs.map((r) => r.unregister()));
+      }
+      if (window.caches) {
+        const ks = await caches.keys();
+        await Promise.all(ks.map((k) => caches.delete(k)));
+      }
+      setTimeout(() => location.reload(), 600);
+    } catch (e) {}
+  }
+
   // ---------- Versão ----------
   function marcarVersao() {
     const p = $("#pillVer");
     if (!p) return;
     p.textContent = APP_VERSION;
+    p.title = "Versão aberta. Toque para limpar o cache e buscar a mais nova.";
     p.addEventListener("click", async () => {
       p.textContent = "…";
       try {
@@ -4713,6 +4743,7 @@ FC.Migrar = (function () {
     ligarOlho();
     render();
     abrirAtalho();
+    conferirVersao();
     window.addEventListener("fc:remote", render);
 
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
