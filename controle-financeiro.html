@@ -2447,7 +2447,7 @@ FC.Migrar = (function () {
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v53";
+  const APP_VERSION = "v54";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -2855,16 +2855,29 @@ FC.Migrar = (function () {
     })).sort((a, b) => Math.abs(b.valor) - Math.abs(a.valor));
   }
 
+  // A previsão começa SEMPRE no mês corrente, não no mês que estiver
+  // escolhido na régua das outras telas: futuro que começa em dezembro
+  // porque você tinha aberto dezembro em Lançamentos é armadilha.
   function serieFutura(cen) {
-    const ym0 = mesAtivo();
+    const ym0 = hoje().slice(0, 7);
     const base = fatias(ym0, null);
     const est = baseVariavel(ym0);
     refVariavel = est;
+    // O primeiro mês mostra o gasto livre REAL quando ele já existe. Quando
+    // ainda é zero (a fatura daquele mês não chegou), vale a estimativa: um
+    // mês com zero de gasto do dia a dia não existe, e escrever isso na
+    // tabela dava uma sobra que ninguém vai ter.
+    if (!(base.variavel > 0) && est.valor > 0) {
+      base.variavel = est.valor;
+      base.total = base.fixos + base.parcelas + base.recorrentes + base.variavel;
+      base.estimado = true;
+    }
     const out = [base];
     for (let i = 1; i < MESES_FUTURO; i++) {
       const m = fatias(Bl.ymAdd(ym0, i), est.valor);
       if (cen === "ritmo") m.parcelas = Math.max(m.parcelas, base.parcelas);
       m.total = m.fixos + m.parcelas + m.recorrentes + m.variavel;
+      m.estimado = true;
       out.push(m);
     }
     return out;
@@ -3544,7 +3557,8 @@ FC.Migrar = (function () {
     $("#notaPrev").textContent = (r > 0 && k.negativos
       ? `${k.negativos} ${k.negativos === 1 ? "mês fecha" : "meses fecham"} no vermelho se nada mudar. `
       : "Comprometido é o que já está contratado. ")
-      + `O gasto livre é estimativa: repete o nível de ${refMes}.`;
+      + `O gasto livre é estimativa: repete o nível de ${refMes}. `
+      + `A conta começa em ${mesLabel(serie[0].ym)}, o mês corrente.`;
 
     const FAIXAS = [
       { k: "fixos", cor: "#8b8ba3", nome: "Fora do cartão" },
