@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v46";
+  const APP_VERSION = "v47";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -475,6 +475,29 @@
             ? `Dá ${money(s.sobra / dias)} por dia ao longo de ${mesNome(s.ym).toLowerCase()}`
             : "")
       : "";
+
+    // O mini dash ao lado do saldo: o mês em três números, e cada um leva
+    // para a tela onde ele é detalhado.
+    const totalCartao = s.variavel + s.parcelas + s.recorrentes;
+    const emAberto = contasDoMes(s.ym).filter((c) => !c.paga);
+    const somaAberto = emAberto.reduce((t, c) => t + c.valor, 0);
+    const fat = faturas().find((f) => f.ym === s.ym);
+    $("#saldoMini").innerHTML = `
+      <button type="button" class="mini" data-ir="lancamentos">
+        <span class="mrot">💳 Cartão</span>
+        <span class="mval">${money(totalCartao)}</span>
+        <span class="mdet">${fat ? "fatura de " + mesLabel(s.ym) : "sem fatura importada"}</span>
+      </button>
+      <button type="button" class="mini" data-ir="conta">
+        <span class="mrot">🏠 Fora do cartão</span>
+        <span class="mval">${money(s.fixos)}</span>
+        <span class="mdet">boleto, PIX, débito e dinheiro</span>
+      </button>
+      ${somaAberto > 0 ? `<button type="button" class="mini" data-ir="conta">
+        <span class="mrot">🧾 Ainda a pagar</span>
+        <span class="mval">${money(somaAberto)}</span>
+        <span class="mdet">${emAberto.length} conta${emAberto.length === 1 ? "" : "s"} em aberto</span>
+      </button>` : ""}`;
 
     // Saúde do mês
     const cx = $("#saude");

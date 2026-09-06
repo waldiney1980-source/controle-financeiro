@@ -76,7 +76,7 @@ controle-financeiro/
 
 | Tela | Para quê |
 |---|---|
-| **Mês** | Quanto sobra, quanto cabe por dia, para onde o dinheiro vai e as contas a pagar (com marcar pago). |
+| **Mês** | Quanto sobra e quanto cabe por dia, com o mês em três números ao lado (cartão, fora do cartão e o que ainda falta pagar), para onde o dinheiro vai e as contas a pagar (com marcar pago). |
 | **Lançamentos** | Tudo do mês numa lista só — fatura, parcelas, contas e o que foi digitado. É onde se lança um gasto e se importa a fatura, em PDF, em .txt ou colando o texto. |
 | **Conta** | O que entra e o que sai sem passar no cartão: receitas (avulsas ou todo mês), despesas fora da fatura e as contas a pagar, com o saldo do mês. |
 | **Economia** | Onde dá para cortar, calculado dos seus próprios lançamentos: cobrança repetida na fatura, assinatura em dobro, o peso das assinaturas por ano, corrida de aplicativo e comida por app, onde o dinheiro foi e quando as parcelas aliviam. |
