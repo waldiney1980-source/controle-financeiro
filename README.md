@@ -81,7 +81,7 @@ controle-financeiro/
 | **Conta** | O que entra e o que sai sem passar no cartão: receitas (avulsas ou todo mês), despesas fora da fatura e as contas a pagar, com o saldo do mês. |
 | **Investir** | O que você já guardou: aplicações com valor de hoje e valor aplicado, rendimento, aporte mensal e, o número que importa, quantos meses do seu gasto essa reserva cobre. |
 | **Economia** | Onde dá para cortar, calculado dos seus próprios lançamentos: cobrança repetida na fatura, assinatura em dobro, o peso das assinaturas por ano, corrida de aplicativo e comida por app, onde o dinheiro foi e quando as parcelas aliviam. |
-| **Futuro** | Dash de previsão: quanto já está comprometido em 12 meses, qual mês aperta mais, quanto ainda falta de parcelas, a tabela mês a mês, o gráfico e quando cada parcela acaba. |
+| **Futuro** | Dash de previsão que começa sempre no mês corrente, não no mês escolhido nas outras telas: quanto já está comprometido em 12 meses, qual mês aperta mais, quanto ainda falta de parcelas, a tabela mês a mês, o gráfico e quando cada parcela acaba. |
 
 A fatura entra de três jeitos, em **Lançamentos → Importar**:
 
