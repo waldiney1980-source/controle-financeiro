@@ -513,3 +513,17 @@ label.btn{box-sizing:border-box;text-align:center}
 }
 .sd.pos{color:var(--verde)}
 .sd.neg{color:var(--vermelho)}
+
+/* ---------- Olho de ocultar valores ---------- */
+.pill.olho{
+  display:inline-flex;align-items:center;justify-content:center;
+  padding:5px 9px;border:0;cursor:pointer;color:var(--label-2);
+}
+.pill.olho svg{width:19px;height:19px;display:block}
+.pill.olho.fechado{color:var(--azul)}
+/* olho cortado quando está escondendo */
+.pill.olho.fechado svg{position:relative}
+.pill.olho.fechado::after{
+  content:"";position:absolute;width:22px;height:1.7px;border-radius:2px;
+  background:currentColor;transform:rotate(-45deg);
+}

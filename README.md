@@ -72,7 +72,7 @@ controle-financeiro/
     └── assets/icons/
 ```
 
-### 3.1 As três telas
+### 3.1 As telas
 
 | Tela | Para quê |
 |---|---|
@@ -138,6 +138,11 @@ despesa lançada em dobro.
 Na tela Mês, cada linha de "Para onde vai" abre e mostra os lançamentos que formam
 aquele número, com as mesmas regras que somam o total. É como se confere se a conta
 fecha, e foi assim que apareceu a assinatura contada duas vezes descrita abaixo.
+
+O olho no alto da tela esconde todos os valores, como no aplicativo do banco: dinheiro
+vira `R$ ●●●●` em todas as telas, inclusive no gráfico e na receita fixa (que vira
+campo de senha, sem perder o valor). A escolha fica guardada **neste aparelho**, não no
+cofre: dá para esconder no computador do trabalho e mostrar no celular.
 
 Ao lançar um gasto dá para dizer o que ele faz nos meses seguintes:
 

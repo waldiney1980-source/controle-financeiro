@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v55";
+  const APP_VERSION = "v56";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -23,8 +23,17 @@
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
   const cfg = window.FC_CONFIG || {};
-  const money = (v) => (+v || 0).toLocaleString(cfg.LOCALE || "pt-BR",
+
+  // Olho fechado: os valores somem da tela, como no aplicativo do banco. É
+  // preferência DESTE aparelho, então mora no navegador e não no cofre: você
+  // pode querer esconder no computador do trabalho e mostrar no celular.
+  let ocultar = false;
+  try { ocultar = localStorage.getItem("fc_ocultar") === "1"; } catch (e) {}
+  const MASCARA = "R$ ●●●●";
+
+  const moneyReal = (v) => (+v || 0).toLocaleString(cfg.LOCALE || "pt-BR",
     { style: "currency", currency: cfg.MOEDA || "BRL" });
+  const money = (v) => (ocultar ? MASCARA : moneyReal(v));
   const hoje = () => new Date().toISOString().slice(0, 10);
   const esc = (s) => String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -45,6 +54,7 @@
   }
   const diaCurto = (d) => (d ? `${String(d).slice(8, 10)}/${String(d).slice(5, 7)}` : "");
   function curto(v) {
+    if (ocultar) return "•••";
     const n = Math.abs(+v || 0);
     if (n >= 1000) {
       const k = n / 1000;
@@ -484,6 +494,7 @@
 
     renderMeses();
     if (t === "mes") renderMes();
+    setTimeout(pintaOlho, 0);   // os campos são redesenhados a cada render
     if (t === "lancamentos") renderLancamentos();
     if (t === "conta") renderConta();
     if (t === "investir") renderInvestir();
@@ -812,10 +823,10 @@
       <div class="kpi"><div class="rot">Rendimento</div>
         <div class="val ${ganho < 0 ? "mal" : ""}">${ganho >= 0 ? "+" : "−"}${money(Math.abs(ganho))}</div>
         <div class="nota">${aplicado > 0
-          ? `sobre ${money(aplicado)} aplicados · ${(ganho / aplicado * 100).toFixed(1).replace(".", ",")}%`
+          ? `sobre ${money(aplicado)} aplicados${ocultar ? "" : ` · ${(ganho / aplicado * 100).toFixed(1).replace(".", ",")}%`}`
           : "informe quanto você aplicou para ver o ganho"}</div></div>
       <div class="kpi"><div class="rot">Segura você por</div>
-        <div class="val">${gasto > 0 ? meses.toFixed(1).replace(".", ",") + " meses" : "—"}</div>
+        <div class="val">${gasto > 0 ? (ocultar ? "•••" : meses.toFixed(1).replace(".", ",") + " meses") : "—"}</div>
         <div class="nota">${gasto > 0
           ? `com o gasto de um mês típico, ${money(gasto)}`
           : "lance um mês de gastos para eu calcular"}</div></div>`;
@@ -2171,6 +2182,32 @@
     }
   }
 
+  // ---------- Olho: mostrar ou esconder os valores ----------
+  function pintaOlho() {
+    const b = $("#btnOlho");
+    if (!b) return;
+    b.setAttribute("aria-pressed", ocultar ? "true" : "false");
+    b.setAttribute("aria-label", ocultar ? "Mostrar valores" : "Ocultar valores");
+    b.title = b.getAttribute("aria-label");
+    b.classList.toggle("fechado", ocultar);
+    // O campo da receita guarda o número mesmo escondido: vira campo de
+    // senha em vez de perder o valor.
+    const r = $("#inRenda");
+    if (r) r.type = ocultar ? "password" : "number";
+  }
+
+  function ligarOlho() {
+    const b = $("#btnOlho");
+    if (!b) return;
+    b.addEventListener("click", () => {
+      ocultar = !ocultar;
+      try { localStorage.setItem("fc_ocultar", ocultar ? "1" : "0"); } catch (e) {}
+      render();
+      pintaOlho();
+    });
+    pintaOlho();
+  }
+
   // ---------- Versão ----------
   function marcarVersao() {
     const p = $("#pillVer");
@@ -2208,6 +2245,7 @@
     modo.classList.toggle("on", window.FC_MODE === "online");
 
     ligar();
+    ligarOlho();
     render();
     abrirAtalho();
     window.addEventListener("fc:remote", render);

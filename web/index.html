@@ -8,16 +8,19 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>FinControl</title>
-<link rel="manifest" href="manifest.webmanifest?v=55">
+<link rel="manifest" href="manifest.webmanifest?v=56">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
 <link rel="icon" href="assets/icons/icon-192.png" type="image/png">
-<link rel="stylesheet" href="css/app.css?v=55">
+<link rel="stylesheet" href="css/app.css?v=56">
 </head>
 <body>
 
 <div class="app">
   <header class="topo">
     <div class="topo-cima">
+      <button type="button" class="pill olho" id="btnOlho" aria-pressed="false" aria-label="Ocultar valores" title="Ocultar valores">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"><path d="M2.6 12S6.4 5.6 12 5.6 21.4 12 21.4 12 17.6 18.4 12 18.4 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="2.9"/></svg>
+      </button>
       <span class="pill" id="pillModo">offline</span>
       <span class="pill" id="pillVer" title="Versão. Toque para buscar a mais nova."></span>
       <!-- O auth.js pendura o chip da conta em ".sidebar-foot". -->
@@ -201,13 +204,13 @@
 
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="js/config.js?v=55"></script>
-<script src="js/supabaseClient.js?v=55"></script>
-<script src="js/auth.js?v=55"></script>
-<script src="js/store.js?v=55"></script>
-<script src="js/bills.js?v=55"></script>
-<script src="js/fatura.js?v=55"></script>
-<script src="js/migrar.js?v=55"></script>
-<script src="js/ui.js?v=55"></script>
+<script src="js/config.js?v=56"></script>
+<script src="js/supabaseClient.js?v=56"></script>
+<script src="js/auth.js?v=56"></script>
+<script src="js/store.js?v=56"></script>
+<script src="js/bills.js?v=56"></script>
+<script src="js/fatura.js?v=56"></script>
+<script src="js/migrar.js?v=56"></script>
+<script src="js/ui.js?v=56"></script>
 </body>
 </html>
