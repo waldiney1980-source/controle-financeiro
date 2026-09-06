@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v54";
+  const APP_VERSION = "v55";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -641,7 +641,7 @@
           ${conta
             ? `<button type="button" class="check${l.paga ? " on" : ""}" data-pagar="${l.id}:${ym}" aria-label="Marcar como paga">✓</button>`
             : `<span class="ico">💵</span>`}
-          <span${conta ? ` class="tocavel" data-edit-conta="${l.id}:${ym}"` : ""}>
+          <span class="tocavel" ${conta ? `data-edit-conta="${l.id}:${ym}"` : `data-edit-desp="${l.id}"`}>
             <span class="nome">${esc(l.descricao)}</span>
             <div class="desc">${conta
               ? (l.paga ? "pago em " + diaCurto(l.pagaEm) : "vence " + diaCurto(l.data))
@@ -1469,6 +1469,17 @@
         o: [{ v: "sim", t: "Lançar como saída (o dinheiro sai da conta)" },
             { v: "nao", t: "Não lançar, só somar no investimento" }] }
     ],
+    despesa: [
+      { n: "descricao", l: "O que é", t: "text", req: true },
+      { n: "valor", l: "Valor (R$)", t: "number", req: true },
+      { n: "data", l: "Quando", t: "date", v: () => hoje() },
+      { n: "situacao", l: "E esta despesa", t: "select",
+        o: [{ v: "pago", t: "Já paguei, o dinheiro saiu" },
+            { v: "pagar", t: "Ainda vou pagar (vira conta a pagar)" }],
+        dica: "Mudando para <b>ainda vou pagar</b>, ela vira conta a pagar e ganha a bolinha de marcar, igual às outras." },
+      { n: "repete", l: "E nos meses seguintes?", t: "select",
+        o: [{ v: "nenhuma", t: "Não se repete" }, { v: "mensal", t: "Volta todo mês" }] }
+    ],
     conta: [
       { n: "descricao", l: "O que é", t: "text", req: true },
       { n: "valor", l: "Valor (R$)", t: "number", req: true },
@@ -1478,7 +1489,7 @@
     ]
   };
   const TITULOS = { gasto: "Lançar gasto", receita: "Lançar receita",
-    conta: "Nova conta a pagar", aplicacao: "Nova aplicação",
+    despesa: "Editar despesa", conta: "Nova conta a pagar", aplicacao: "Nova aplicação",
     aporte: "Registrar aporte", importar: "Importar" };
 
   function campoHtml(c) {
@@ -1555,7 +1566,8 @@
     modalTipo = tipo;
     modalCtx = ctx || null;
     $("#modalTit").textContent = (ctx && ctx.id
-      ? (tipo === "aplicacao" ? "Editar aplicação" : "Editar conta")
+      ? (tipo === "aplicacao" ? "Editar aplicação"
+        : tipo === "despesa" ? "Editar despesa" : "Editar conta")
       : TITULOS[tipo]) || "Novo";
     if (tipo === "gasto" && ctx && ctx.onde === "fora") $("#modalTit").textContent = "Lançar despesa";
     $("#modalBtns").classList.toggle("hidden", tipo === "importar");
@@ -1836,6 +1848,28 @@
       mesSel = String(data).slice(0, 7);
       aviso = `Aporte de ${money(valor)} em ${esc(inv.nome)}`
         + ((d.sai || "sim") === "sim" ? `, lançado como saída de ${mesLabel(mesSel)}.` : ", sem mexer no caixa.");
+    } else if (modalTipo === "despesa") {
+      if (!modalCtx || !modalCtx.id) return;
+      if (!d.descricao || !d.valor) return alert("Preencha o que é e o valor.");
+      const valor = parseFloat(d.valor) || 0;
+      const data = d.data || hoje();
+      const rec = d.repete === "mensal" ? "mensal" : "nenhuma";
+      if ((d.situacao || "pago") === "pagar") {
+        // Vira conta a pagar: o mesmo dinheiro, agora com vencimento e a
+        // bolinha de marcar. Poupa apagar e digitar tudo de novo.
+        await Store.remove("transactions", modalCtx.id);
+        await Store.add("bills", {
+          descricao: d.descricao.trim(), valor, vencimento: data,
+          recorrencia: rec, pagas: {}, valores: {}
+        });
+        aviso = `${esc(d.descricao.trim())} virou <b>conta a pagar</b>, vencendo ${diaCurto(data)}.`;
+      } else {
+        await Store.update("transactions", modalCtx.id, {
+          descricao: d.descricao.trim(), valor, data, recorrencia: rec
+        });
+        aviso = `Atualizado: ${esc(d.descricao.trim())}, ${money(valor)}.`;
+      }
+      mesSel = String(data).slice(0, 7);
     } else if (modalTipo === "conta") {
       if (!d.descricao || !d.valor) return alert("Preencha o que é e o valor.");
       const valor = parseFloat(d.valor) || 0;
@@ -1999,6 +2033,17 @@
         const o = Bl.ocorrencia(b, ym);
         abrirModal("conta", { id, ym, recorrencia: b.recorrencia, valores: {
           descricao: b.descricao, valor: o.valor, vencimento: o.venc, recorrencia: b.recorrencia
+        } });
+        return;
+      }
+
+      const ed = e.target.closest("[data-edit-desp]");
+      if (ed) {
+        const t = Store.allSync("transactions").find((x) => x.id === ed.dataset.editDesp);
+        if (!t) return;
+        abrirModal("despesa", { id: t.id, valores: {
+          descricao: t.descricao, valor: t.valor, data: t.data,
+          situacao: "pago", repete: t.recorrencia === "mensal" ? "mensal" : "nenhuma"
         } });
         return;
       }

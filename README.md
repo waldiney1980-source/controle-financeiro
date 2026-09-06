@@ -127,6 +127,10 @@ primeira vira conta a pagar, com vencimento e a bolinha para marcar; a segunda �
 dinheiro que já saiu. Telefone, energia e internet caem no primeiro caso, e era isso
 que faltava para eles aparecerem onde se procura por eles.
 
+Tocar no nome abre para editar, tanto a conta quanto a despesa. Na despesa, mudar de
+"já paguei" para "ainda vou pagar" a converte em conta a pagar, com vencimento e a
+bolinha de marcar: não é preciso apagar e digitar tudo de novo.
+
 Na tela Mês, o bloco "Fora do cartão" mostra as duas coisas na mesma lista, cada linha
 com o seu ✕. A lista dentro de "Para onde vai" também apaga, que é onde se enxerga a
 despesa lançada em dobro.
