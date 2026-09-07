@@ -2464,7 +2464,7 @@ FC.Migrar = (function () {
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v60";
+  const APP_VERSION = "v61";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -2502,7 +2502,11 @@ FC.Migrar = (function () {
     if (!ym) return "—";
     const [y, m] = ym.split("-").map(Number);
     const s = new Date(y, m - 1, 1).toLocaleDateString(cfg.LOCALE || "pt-BR", { month: "long" });
-    return s.charAt(0).toUpperCase() + s.slice(1);
+    const nome = s.charAt(0).toUpperCase() + s.slice(1);
+    // O ano só aparece quando não é o corrente: "Setembro" e "Setembro de
+    // 2027" na mesma régua não podem se chamar igual.
+    const anoAtual = +hoje().slice(0, 4);
+    return y === anoAtual ? nome : `${nome} de ${y}`;
   }
   const diaCurto = (d) => (d ? `${String(d).slice(8, 10)}/${String(d).slice(5, 7)}` : "");
   // Número curto para o gráfico. Uma casa decimal SEMPRE que ela existe:
@@ -2586,14 +2590,20 @@ FC.Migrar = (function () {
   // vazio: a tela mostraria zero e pareceria defeito. Para a frente vale
   // meio ano, o bastante para conferir a parcela que você acabou de lançar
   // sem encher a régua de meses até 2028.
-  const HORIZONTE = 6;
+  // Janela da régua: um ano para trás e um ano para a frente do mês corrente.
+  // A conta antiga cortava os 24 mais NOVOS, então uma compra parcelada em
+  // muitas vezes (que cria um mês lá na frente para cada parcela) empurrava
+  // a janela e o mês corrente saía da régua. Sumir da régua parece sumir do
+  // app, com os lançamentos dentro.
+  const HORIZONTE = 12;
   function mesesDisponiveis() {
     const atual = hoje().slice(0, 7);
     const limite = Bl.ymAdd(atual, HORIZONTE);
+    const inicio = Bl.ymAdd(atual, -HORIZONTE);
     const set = new Set(faturas().map((f) => f.ym));
     Store.allSync("transactions").forEach((t) => {
       const m = String(t.data || "").slice(0, 7);
-      if (m && m <= limite) set.add(m);
+      if (m) set.add(m);
     });
     Store.allSync("bills").forEach((b) => {
       const m = String(b.vencimento || "").slice(0, 7);
@@ -2605,8 +2615,9 @@ FC.Migrar = (function () {
     set.add(atual);
     set.add(Bl.ymAdd(atual, 1));
     set.add(Bl.ymAdd(atual, 2));
-    // Do mais antigo para o mais novo, como o tempo anda.
-    return Array.from(set).sort().slice(-24);
+    // Do mais antigo para o mais novo, como o tempo anda, e sempre dentro da
+    // janela: o mês corrente jamais fica de fora.
+    return Array.from(set).filter((m) => m >= inicio && m <= limite).sort();
   }
 
   function renderMeses() {
