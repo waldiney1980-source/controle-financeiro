@@ -150,6 +150,11 @@ Ao lançar um gasto dá para dizer o que ele faz nos meses seguintes:
 - **Volta todo mês, sem prazo** — assinatura, mensalidade, academia. Repete sozinho para a frente e entra na previsão.
 - **É parcelado, tem fim** — informe em quantas vezes e o valor de cada parcela. O app cria uma despesa por mês até a última, dentro ou fora do cartão.
 
+A régua de meses cobre um ano para trás e um ano para a frente do mês corrente, e o mês
+corrente nunca fica de fora: antes ela guardava os 24 meses mais novos, então uma compra
+parcelada em muitas vezes empurrava a janela e o mês de hoje sumia da tela. O título
+mostra o ano quando não é o corrente ("Setembro de 2027").
+
 Lançar com data de outro mês leva a tela para lá, e o aviso diz isso ("a tela mudou de
 Set de 26 para Out de 26"): sem essa frase, o mês que você estava olhando parece ter
 sumido. A régua de meses rola o mínimo necessário, para o mês anterior não sair de vista
