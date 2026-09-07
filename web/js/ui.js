@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v59";
+  const APP_VERSION = "v60";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -167,9 +167,11 @@
       if (!el) return;
       el.innerHTML = html;
       // A régua começa no passado e vai até meio ano à frente, então o mês
-      // aberto pode nascer fora da vista.
+      // aberto pode nascer fora da vista. "nearest" rola o mínimo: centralizar
+      // empurrava o mês anterior para fora da tela, e sumir da vista parece
+      // ter sumido do app.
       const on = el.querySelector(".mes.on");
-      if (on) on.scrollIntoView({ inline: "center", block: "nearest" });
+      if (on) on.scrollIntoView({ inline: "nearest", block: "nearest" });
     });
   }
 
@@ -1752,8 +1754,22 @@
     }
   }
 
+  // Fecha a folha, grava na hora e conta o que aconteceu, inclusive quando a
+  // tela trocou de mês. Existe como função porque a conta a pagar tem saída
+  // própria, e sem isso só um dos caminhos avisava.
+  async function fecharGravando(aviso, mesAntes) {
+    await Store.flush();
+    fecharModal();
+    render();
+    if (aviso && mesAtivo() !== mesAntes) {
+      aviso += `<br>A tela mudou de ${mesLabel(mesAntes)} para ${mesLabel(mesAtivo())}.`;
+    }
+    if (aviso) avisar(aviso);
+  }
+
   async function gravarModal() {
     let aviso = "";
+    const mesAntes = mesAtivo();
     const d = {};
     $$("#modalForm input,#modalForm select").forEach((i) => { if (i.name) d[i.name] = i.value; });
 
@@ -1797,10 +1813,7 @@
           ? `Lançadas <b>${n} contas a pagar</b> de ${money(base.valor)}: ${esc(base.descricao)}, a partir de ${mesLabel(ym0)}.`
           : `Conta a pagar em <b>${mesLabel(ym0)}</b>: ${esc(base.descricao)}, ${money(base.valor)}`
             + (rep === "mensal" ? ", todo mês" : "") + ".";
-        await Store.flush();
-        fecharModal();
-        render();
-        avisar(aviso);
+        await fecharGravando(aviso, mesAntes);
         return;
       }
 
@@ -1934,10 +1947,9 @@
     }
     // Grava agora, sem esperar a folga de meio segundo: fechar o app ou
     // perder o sinal nesse intervalo apagaria o que você acabou de lançar.
-    await Store.flush();
-    fecharModal();
-    render();
-    if (aviso) avisar(aviso);
+    // Lançar em outro mês muda o mês da tela. Sem dizer isso, parece que o
+    // mês que você estava olhando sumiu.
+    await fecharGravando(aviso, mesAntes);
   }
 
   function baixarCopia() {

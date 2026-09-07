@@ -150,6 +150,11 @@ Ao lançar um gasto dá para dizer o que ele faz nos meses seguintes:
 - **Volta todo mês, sem prazo** — assinatura, mensalidade, academia. Repete sozinho para a frente e entra na previsão.
 - **É parcelado, tem fim** — informe em quantas vezes e o valor de cada parcela. O app cria uma despesa por mês até a última, dentro ou fora do cartão.
 
+Lançar com data de outro mês leva a tela para lá, e o aviso diz isso ("a tela mudou de
+Set de 26 para Out de 26"): sem essa frase, o mês que você estava olhando parece ter
+sumido. A régua de meses rola o mínimo necessário, para o mês anterior não sair de vista
+quando o seguinte fica ativo.
+
 Todo lançamento é gravado na hora, sem a folga de meio segundo que o app usava para
 juntar gravações: fechar a tela logo depois de lançar apagaria o que acabou de ser
 feito. E cada lançamento responde com um aviso curto dizendo o que entrou **e em que
