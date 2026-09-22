@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v61";
+  const APP_VERSION = "v62";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -1400,7 +1400,7 @@
         const { catNome, recorrente, ...rest } = l;
         await Store.add("transactions", rest);
       }
-      await podarFaturas(comp);
+      await podarFaturas(card.id, comp);
       await Store.flush();
 
       const fut = lancs.filter((l) => l.projecao).length;
@@ -1440,13 +1440,18 @@
     return Store.add("cards", { nome: "Meu cartão", dia_fechamento: null, dia_vencimento: null });
   }
 
-  async function podarFaturas(protegida) {
-    let fs = faturas();
+  // O limite é por CARTÃO, não somado entre todos. Sem o filtro por
+  // card_id, quem tem mais de um cartão via o histórico e as parcelas
+  // futuras de um cartão sumirem ao importar a fatura de outro: a lista
+  // combinada dos dois já passava de 5 faturas, e a mais velha das duas
+  // era apagada mesmo sendo a única (e recente) daquele cartão.
+  async function podarFaturas(card_id, protegida) {
+    let fs = faturas().filter((f) => f.card_id === card_id);
     while (fs.length > MAX_FATURAS) {
       const velha = fs[fs.length - 1];
       if (velha.ym === protegida) break;
       await apagarFatura(velha.id, true);
-      fs = faturas();
+      fs = faturas().filter((f) => f.card_id === card_id);
     }
   }
 
