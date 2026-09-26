@@ -1511,15 +1511,18 @@ FC.Fatura = (function () {
   }
 
   // ---------- Cabeçalho da fatura ----------
-  // O rótulo nem sempre fica colado na data. Na fatura do Banco do Brasil,
-  // "Vencimento" é uma linha e a data está três linhas abaixo, sozinha —
-  // por isso a busca olha as linhas seguintes, e não só a mesma linha.
   // O rótulo do vencimento muda de banco para banco, e a data quase nunca
   // está colada nele: pode vir na mesma linha, na linha seguinte, ou três
   // linhas abaixo. Aqui a busca é tolerante de propósito — perguntar o mês
   // ao usuário é o último recurso, não o primeiro.
+  //
+  // O separador também muda: o extrato do Banco do Brasil escreve
+  // "Vencimento : 21.09.2026", com PONTO. Lendo só a barra, o vencimento
+  // passava batido, o mês saía de palpite e a fatura caía no mês errado. O
+  // valor em reais não vira data porque o milhar tem três dígitos
+  // ("19.764,54" não casa com dia.mês.ano).
   const RE_ROTULO_VENC = /vencimento|vencto|venc\.|vence em|pagar at[ée]|pagamento at[ée]/i;
-  const RE_DATA = /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/;
+  const RE_DATA = /(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})(?!\d)/;
   const RE_DATA_EXTENSO = /(\d{1,2})\s*(?:de\s+)?([a-zç]{3,9})\.?\s*(?:de\s+)?(\d{4})/i;
 
   function dataExtenso(linha) {
@@ -1551,26 +1554,48 @@ FC.Fatura = (function () {
     }
     // Reserva: o fechamento diz a competência mesmo sem o vencimento.
     for (let i = 0; i < linhas.length; i++) {
-      const m = linhas[i].match(/fatura fechada em\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i);
+      const m = linhas[i].match(/fatura fechada em\s*(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i);
       if (m) return { partes: [m[1], m[2], m[3]], linha: i };
     }
     return null;
   }
 
+  const maiorMes = (a, b) => (a > b ? a : b);
+
+  // ---------- Qual é a próxima fatura em aberto ----------
+  // Agosto já passou: a fatura de agosto foi paga e o mês está fechado. Um
+  // arquivo de lançamentos futuros tirado depois do dia do vencimento é a
+  // fatura do mês SEGUINTE, nunca a que já venceu. Sem esta conta, o extrato
+  // tirado em 22/09 (vencimento dia 21) voltava para setembro e apagava a
+  // fatura que já tinha sido fechada e paga.
+  //
+  // Sem o dia do vencimento cadastrado, a conta fica no mês corrente: é o
+  // palpite conservador, o que importa é nunca retroagir.
+  function proximaFaturaEmAberto(diaVenc, refISO) {
+    const ref = /^\d{4}-\d{2}-\d{2}$/.test(refISO || "") ? refISO
+      : new Date().toISOString().slice(0, 10);
+    const ym = ref.slice(0, 7);
+    const dia = +ref.slice(8, 10);
+    const venc = parseInt(diaVenc, 10);
+    if (venc >= 1 && venc <= 31 && dia > venc) return FC.Bills.ymAdd(ym, 1);
+    return ym;
+  }
+
   // Fatura ainda aberta ("lançamentos futuros", "próxima fatura") não traz
   // vencimento, e a última compra pode ser do mês passado: o Elo com compras
-  // até 21/08 é a fatura que vence em setembro. Nesse caso vale a data em que
-  // o extrato foi tirado, que o cabeçalho traz.
-  function competenciaPelaEmissao(linhas) {
+  // até 21/08 é a fatura que vence em setembro. O que o cabeçalho traz é a
+  // data em que o extrato foi tirado — devolvida inteira, porque é o dia,
+  // não só o mês, que diz se a fatura daquele mês já venceu.
+  function emissaoDoExtrato(linhas) {
     // O extrato escreve o título espaçado, letra por letra:
     // "L A N Ç A M E N T O S    F U T U R O S". Aqui isso volta a ser palavra.
     const texto = linhas.join("\n")
       .replace(/\b(?:[A-Za-zÀ-ÿ]\s){2,}[A-Za-zÀ-ÿ]\b/g, (m) => m.replace(/\s+/g, ""));
     if (!/lan[çc]amentos\s*futuros|pr[óo]xima\s*fatura|fatura\s*em\s*aberto/i.test(texto)) return null;
     for (const l of linhas) {
-      const m = l.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+      const m = l.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})(?!\d)/);
       if (m && (/\d{2}:\d{2}/.test(l) || /auto[- ]?atendimento|extrato|emiss[ãa]o/i.test(l))) {
-        return m[3] + "-" + pad(+m[2]);
+        return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
       }
     }
     return null;
@@ -1627,6 +1652,16 @@ FC.Fatura = (function () {
         if (mm) competencia = `${m[2]}-${pad(mm)}`;
       }
     }
+    // "SALDO FATURA ANTERIOR": o que ficou da fatura passada. O extrato de
+    // lançamentos futuros soma esse saldo no total impresso, mas ele já foi
+    // contado quando a fatura anterior entrou — por isso fica guardado à
+    // parte, para a conferência do total não acusar diferença falsa.
+    let saldoAnterior = null;
+    for (const l of linhas) {
+      const s = l.match(/^saldo\s+(?:da\s+)?fatura\s+anterior\D{0,30}(-?\d{1,3}(?:\.\d{3})*,\d{2})/i);
+      if (s) { saldoAnterior = valorBR(s[1]).valor; break; }
+    }
+
     m = texto.match(/(?:total (?:da fatura|a pagar)|valor total(?: da fatura)?)[^\d-]{0,20}(\d{1,3}(?:\.\d{3})*,\d{2})/i);
     if (m) total = valorBR(m[1]).valor;
     // O extrato do BB não escreve "Total da Fatura": escreve uma linha
@@ -1638,7 +1673,7 @@ FC.Fatura = (function () {
       }
     }
 
-    return { vencimento, competencia, total, linhaVencimento };
+    return { vencimento, competencia, total, saldoAnterior, linhaVencimento };
   }
 
   // ---------- De qual cartão é esta fatura ----------
@@ -1709,7 +1744,11 @@ FC.Fatura = (function () {
         parcelaAtual: p0 ? p0.i : null, parcelaTotal: p0 ? p0.n : null, linha
       };
     }
-    let m = linha.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+    // Data no começo da linha: 09/08, 09/08/2026, 09-08 e também 08.09.2026,
+    // o jeito do extrato do Banco do Brasil — que ainda cola a descrição no
+    // ano, sem espaço ("08.09.2026DESC AUTOMATICO"). Por isso não se exige
+    // fim de palavra depois do ano, só que não venha outro dígito.
+    let m = linha.match(/^(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4})(?!\d))?/);
     if (m) {
       dia = +m[1]; mes = +m[2];
       if (m[3]) ano = m[3].length === 2 ? 2000 + +m[3] : +m[3];
@@ -1859,17 +1898,26 @@ FC.Fatura = (function () {
   }
 
   // ---------- Fatura inteira ----------
-  function analisar(linhas, competenciaPadrao, forcada) {
+  function analisar(linhas, competenciaPadrao, forcada, opcoes) {
+    const diaVenc = opcoes && opcoes.diaVenc;
     const cab = lerCabecalho(linhas);
     // Cabeçalho de colunas "... Valor R$   Valor US$": diz que o real vem
     // antes do dólar em cada linha.
     const rsAntesDeUs = linhas.some((l) => /valor\s*r\$[\s\S]{0,40}valor\s*us\$/i.test(l));
     // Ordem: o mês que VOCÊ escolheu na tela manda em tudo. Depois o que está
-    // escrito na fatura, depois a data em que o extrato foi tirado (fatura
-    // ainda aberta), e só então o mês da compra mais recente.
-    const emissao = (forcada || cab.competencia) ? null : competenciaPelaEmissao(linhas);
-    const palpite = (forcada || cab.competencia || emissao) ? null : competenciaPelasCompras(linhas);
-    const competencia = forcada || cab.competencia || emissao || palpite || competenciaPadrao;
+    // escrito na fatura, depois o extrato de lançamentos futuros (que é sempre
+    // a próxima fatura em aberto), e só então o mês da compra mais recente.
+    //
+    // Arquivo de lançamentos futuros olha PARA FRENTE: ele não vira o mês em
+    // que foi tirado, vira a primeira fatura que ainda não venceu — nem a do
+    // extrato, se o dia do vencimento daquele mês já passou, nem nenhum mês
+    // anterior a hoje. Mês que já fechou continua com o que foi lançado nele.
+    const emissao = (forcada || cab.competencia) ? null : emissaoDoExtrato(linhas);
+    const futura = emissao
+      ? maiorMes(proximaFaturaEmAberto(diaVenc, emissao), proximaFaturaEmAberto(diaVenc))
+      : null;
+    const palpite = (forcada || cab.competencia || futura) ? null : competenciaPelasCompras(linhas);
+    const competencia = forcada || cab.competencia || futura || palpite || competenciaPadrao;
     const itens = [], ignoradas = [];
     let secao = "", portador = "";
     linhas.forEach((l, indice) => {
@@ -1914,10 +1962,11 @@ FC.Fatura = (function () {
       competenciaDetectada: !!(forcada || cab.competencia),
       competenciaOrigem: forcada ? "escolhida"
         : cab.competencia ? "fatura"
-        : emissao ? "emissao"
+        : futura ? "emissao"
         : palpite ? "compras" : "tela",
       vencimento: cab.vencimento,
       totalDeclarado: cab.total,
+      saldoAnterior: cab.saldoAnterior,
       itens,
       ignoradas,
       totalCompras: bruto,
@@ -2102,7 +2151,8 @@ FC.Fatura = (function () {
   return {
     lerLinhas, lerArquivo, linhasDeTexto,
     analisar, analisarTolerante, expandir, acharVencimento, competenciaPelasCompras,
-    competenciaPelaEmissao, identificarCartao, substituiveis, manuaisEmRisco, diaVencimento,
+    emissaoDoExtrato, proximaFaturaEmAberto,
+    identificarCartao, substituiveis, manuaisEmRisco, diaVencimento,
     valorBR, acharParcela, ehRecorrente, chaveSerie, recorrentesConhecidas
   };
 })();
@@ -2464,7 +2514,7 @@ FC.Migrar = (function () {
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v62";
+  const APP_VERSION = "v63";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -3797,7 +3847,18 @@ FC.Migrar = (function () {
         return;
       }
       const forcado = /^\d{4}-\d{2}$/.test(mesEscolhido) ? mesEscolhido : null;
-      const res = FC.Fatura.analisar(linhas, ($("#fatMes") || {}).value || hoje().slice(0, 7), forcado);
+      // O dia digitado na folha manda e fica guardado no cartão: quando o
+      // arquivo não traz o vencimento, é ele que põe as parcelas no dia certo.
+      const diaDigitado = parseInt(($("#fatDia") || {}).value, 10);
+      if (diaDigitado >= 1 && diaDigitado <= 31 && diaDigitado !== card.dia_vencimento) {
+        await Store.update("cards", card.id, { dia_vencimento: diaDigitado });
+        card = { ...card, dia_vencimento: diaDigitado };
+      }
+      // O dia do vencimento vai junto porque é ele que diz se a fatura deste
+      // mês já venceu: é o que faz um arquivo de lançamentos futuros cair na
+      // próxima fatura em aberto, em vez de voltar para um mês já fechado.
+      const res = FC.Fatura.analisar(linhas, ($("#fatMes") || {}).value || hoje().slice(0, 7), forcado,
+        { diaVenc: card.dia_vencimento });
       if (!res.itens.length) {
         st.innerHTML = `<div class="aviso ruim">Li o arquivo mas não reconheci nenhuma compra.
           Cada lançamento precisa começar com a data, como <b>09/08 POSTO SHELL 210,40</b>.</div>`;
@@ -3811,12 +3872,12 @@ FC.Migrar = (function () {
       const campoMesInput = $("#fatMes");
       if (campoMesInput && !mesEscolhido) campoMesInput.value = res.competencia;
       const comp = res.competencia;
-      // O dia digitado na folha manda e fica guardado no cartão: quando o
-      // arquivo não traz o vencimento, é ele que põe as parcelas no dia certo.
-      const diaDigitado = parseInt(($("#fatDia") || {}).value, 10);
-      if (diaDigitado >= 1 && diaDigitado <= 31 && diaDigitado !== card.dia_vencimento) {
-        await Store.update("cards", card.id, { dia_vencimento: diaDigitado });
-        card = { ...card, dia_vencimento: diaDigitado };
+      // O vencimento impresso ensina o dia ao cartão que ainda não tem: na
+      // próxima importação é ele que diz se o mês já fechou.
+      const diaDoArquivo = res.vencimento ? +res.vencimento.slice(8, 10) : 0;
+      if (!card.dia_vencimento && diaDoArquivo >= 1 && diaDoArquivo <= 31) {
+        await Store.update("cards", card.id, { dia_vencimento: diaDoArquivo });
+        card = { ...card, dia_vencimento: diaDoArquivo };
       }
       const diaVenc = FC.Fatura.diaVencimento(card, res.vencimento);
       const lancs = FC.Fatura.expandir(res.itens, {
@@ -3825,7 +3886,12 @@ FC.Migrar = (function () {
         conhecidas: FC.Fatura.recorrentesConhecidas(Store.allSync("transactions"))
       });
       const soma = lancs.filter((l) => !l.projecao).reduce((s, l) => s + l.valor, 0);
-      const bate = res.totalDeclarado != null && Math.abs(res.totalDeclarado - soma) < 0.05;
+      // O extrato de lançamentos futuros soma o saldo da fatura anterior no
+      // total impresso. Esse saldo já entrou com a fatura passada e não pode
+      // contar de novo, então o confere aceita o total com ou sem ele.
+      const semSaldo = res.totalDeclarado - (res.saldoAnterior || 0);
+      const bate = res.totalDeclarado != null &&
+        (Math.abs(res.totalDeclarado - soma) < 0.05 || Math.abs(semSaldo - soma) < 0.05);
 
       // A mesma fatura importada antes no mês errado: mesmo cartão, mesma
       // soma, mesma quantidade, outra competência. Corrigir o mês tem que
@@ -3857,23 +3923,32 @@ FC.Migrar = (function () {
 
       const fut = lancs.filter((l) => l.projecao).length;
       const rec = lancs.filter((l) => l.recorrente).length;
-      const semData = res.competenciaOrigem !== "fatura";
+      // Arquivo de lançamentos futuros não é palpite fraco: ele vai, por
+      // regra, para a próxima fatura em aberto. O aviso amarelo fica para
+      // quando o mês saiu mesmo de adivinhação.
+      const semData = res.competenciaOrigem === "compras" || res.competenciaOrigem === "tela";
       const deQuem = `<br>Cartão: <b>${esc(card.nome)}</b>${card.final ? " (final " + card.final + ")" : ""}${
         achado.novo ? " — cadastrado agora, a partir do próprio arquivo." : ""}${
         gemeas.length ? `<br>Movi esta mesma fatura de ${gemeas.map((g) => mesLabel(g.ym)).join(", ")} para ${mesLabel(comp)}.` : ""}`;
       st.innerHTML = `<div class="aviso ${semData ? "atencao" : "bom"}">${semData ? "⚠️" : "✅"}
         <b>${mesLabel(comp)}</b> lançada — ${lancs.length - fut} do mês${
         fut ? `, ${fut} parcelas nos meses seguintes` : ""}${rec ? `, ${rec} recorrentes` : ""}.
-        ${bate ? `<br>Confere com o total impresso: <b>${money(res.totalDeclarado)}</b>.`
+        ${bate ? `<br>Confere com o total impresso: <b>${money(res.totalDeclarado)}</b>${
+                 res.saldoAnterior && Math.abs(semSaldo - soma) < 0.05
+                   ? `, dos quais ${money(res.saldoAnterior)} são saldo da fatura anterior, já contado no mês dela`
+                   : ""}.`
                : res.totalDeclarado
                  ? `<br>⚠️ Somei ${money(soma)}, a fatura diz ${money(res.totalDeclarado)}. Confira os lançamentos.`
                  : ""}
         ${deQuem}
-        ${semData ? `<br>A fatura não diz o vencimento, então usei <b>${mesLabel(comp)}</b>, ${
-          res.competenciaOrigem === "emissao" ? "o mês em que o extrato foi tirado"
-          : res.competenciaOrigem === "compras" ? "o mês da compra mais recente"
-          : "o mês do campo acima"}.
-          Se não for esse, corrija a competência acima e mande o arquivo de novo.` : ""}</div>`;
+        ${res.competenciaOrigem === "emissao"
+          ? `<br>Este arquivo é de <b>lançamentos futuros</b>, então entrou na próxima fatura em
+             aberto, <b>${mesLabel(comp)}</b>. Mês já vencido não é mexido: ele continua com o
+             que foi lançado nele.`
+          : semData ? `<br>A fatura não diz o vencimento, então usei <b>${mesLabel(comp)}</b>, ${
+              res.competenciaOrigem === "compras" ? "o mês da compra mais recente"
+              : "o mês do campo acima"}.
+            Se não for esse, corrija a competência acima e mande o arquivo de novo.` : ""}</div>`;
       const caixa = $("#fatTexto");
       if (caixa) caixa.value = "";
       mesSel = comp;
@@ -4115,13 +4190,14 @@ FC.Migrar = (function () {
   function folhaImportarHtml() {
     return `
       <p class="dica" style="margin:0 0 12px">Mande a fatura em PDF ou em texto: as compras entram no mês do
-        vencimento e as parcelas que faltam se espalham sozinhas pelos meses seguintes.</p>
+        vencimento e as parcelas que faltam se espalham sozinhas pelos meses seguintes.
+        Arquivo de lançamentos futuros entra na próxima fatura em aberto: mês que já venceu fica como está.</p>
       <div class="campo"><label>Cartão</label><select id="fatCard"></select></div>
       <p class="dica" style="margin-top:0">O app reconhece o cartão pelo número que vem escrito na fatura e
         cadastra sozinho quando é um novo. Escolha um acima só para forçar.</p>
       <div class="campo"><label>Dia do vencimento da fatura</label>
         <input type="number" id="fatDia" min="1" max="31" inputmode="numeric" placeholder="ex.: 21"></div>
-      <div class="campo hidden" id="fatMesCx"><label>Competência (não achei na fatura)</label>
+      <div class="campo hidden" id="fatMesCx"><label>Competência (mês em que a fatura vence)</label>
         <input type="month" id="fatMes"></div>
       <input type="file" id="fatFile" accept=".pdf,.txt,.csv,text/plain,text/csv,application/pdf" class="arquivo">
       <div style="margin-top:12px"><label class="btn" for="fatFile">Escolher arquivo (PDF ou TXT)</label></div>
@@ -4716,6 +4792,11 @@ FC.Migrar = (function () {
       if (!m) return;
       const publicada = "v" + m[1];
       if (publicada === APP_VERSION) return;
+      // Só vale a pena recarregar para uma versão MAIS NOVA. Quando o número
+      // publicado era menor que o aberto (por um bump esquecido no
+      // index.html), o app apagava o service worker e recarregava a cada
+      // abertura, e o app instalado ficava num vai e vem sem nunca abrir.
+      if (+m[1] <= +APP_VERSION.slice(1)) return;
       // Trava contra laço: tenta uma vez por versão publicada.
       if (sessionStorage.getItem("fc_atualizando") === publicada) return;
       sessionStorage.setItem("fc_atualizando", publicada);
