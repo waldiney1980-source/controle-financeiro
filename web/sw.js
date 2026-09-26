@@ -1,5 +1,5 @@
 /* Service Worker — FinControl (rede primeiro, cache como reserva offline) */
-const CACHE = "fincontrol-v61";
+const CACHE = "fincontrol-v63";
 const ASSETS = [
   "./index.html",
   "./css/app.css",

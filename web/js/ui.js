@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v62";
+  const APP_VERSION = "v63";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -1345,7 +1345,18 @@
         return;
       }
       const forcado = /^\d{4}-\d{2}$/.test(mesEscolhido) ? mesEscolhido : null;
-      const res = FC.Fatura.analisar(linhas, ($("#fatMes") || {}).value || hoje().slice(0, 7), forcado);
+      // O dia digitado na folha manda e fica guardado no cartão: quando o
+      // arquivo não traz o vencimento, é ele que põe as parcelas no dia certo.
+      const diaDigitado = parseInt(($("#fatDia") || {}).value, 10);
+      if (diaDigitado >= 1 && diaDigitado <= 31 && diaDigitado !== card.dia_vencimento) {
+        await Store.update("cards", card.id, { dia_vencimento: diaDigitado });
+        card = { ...card, dia_vencimento: diaDigitado };
+      }
+      // O dia do vencimento vai junto porque é ele que diz se a fatura deste
+      // mês já venceu: é o que faz um arquivo de lançamentos futuros cair na
+      // próxima fatura em aberto, em vez de voltar para um mês já fechado.
+      const res = FC.Fatura.analisar(linhas, ($("#fatMes") || {}).value || hoje().slice(0, 7), forcado,
+        { diaVenc: card.dia_vencimento });
       if (!res.itens.length) {
         st.innerHTML = `<div class="aviso ruim">Li o arquivo mas não reconheci nenhuma compra.
           Cada lançamento precisa começar com a data, como <b>09/08 POSTO SHELL 210,40</b>.</div>`;
@@ -1359,12 +1370,12 @@
       const campoMesInput = $("#fatMes");
       if (campoMesInput && !mesEscolhido) campoMesInput.value = res.competencia;
       const comp = res.competencia;
-      // O dia digitado na folha manda e fica guardado no cartão: quando o
-      // arquivo não traz o vencimento, é ele que põe as parcelas no dia certo.
-      const diaDigitado = parseInt(($("#fatDia") || {}).value, 10);
-      if (diaDigitado >= 1 && diaDigitado <= 31 && diaDigitado !== card.dia_vencimento) {
-        await Store.update("cards", card.id, { dia_vencimento: diaDigitado });
-        card = { ...card, dia_vencimento: diaDigitado };
+      // O vencimento impresso ensina o dia ao cartão que ainda não tem: na
+      // próxima importação é ele que diz se o mês já fechou.
+      const diaDoArquivo = res.vencimento ? +res.vencimento.slice(8, 10) : 0;
+      if (!card.dia_vencimento && diaDoArquivo >= 1 && diaDoArquivo <= 31) {
+        await Store.update("cards", card.id, { dia_vencimento: diaDoArquivo });
+        card = { ...card, dia_vencimento: diaDoArquivo };
       }
       const diaVenc = FC.Fatura.diaVencimento(card, res.vencimento);
       const lancs = FC.Fatura.expandir(res.itens, {
@@ -1373,7 +1384,12 @@
         conhecidas: FC.Fatura.recorrentesConhecidas(Store.allSync("transactions"))
       });
       const soma = lancs.filter((l) => !l.projecao).reduce((s, l) => s + l.valor, 0);
-      const bate = res.totalDeclarado != null && Math.abs(res.totalDeclarado - soma) < 0.05;
+      // O extrato de lançamentos futuros soma o saldo da fatura anterior no
+      // total impresso. Esse saldo já entrou com a fatura passada e não pode
+      // contar de novo, então o confere aceita o total com ou sem ele.
+      const semSaldo = res.totalDeclarado - (res.saldoAnterior || 0);
+      const bate = res.totalDeclarado != null &&
+        (Math.abs(res.totalDeclarado - soma) < 0.05 || Math.abs(semSaldo - soma) < 0.05);
 
       // A mesma fatura importada antes no mês errado: mesmo cartão, mesma
       // soma, mesma quantidade, outra competência. Corrigir o mês tem que
@@ -1405,23 +1421,32 @@
 
       const fut = lancs.filter((l) => l.projecao).length;
       const rec = lancs.filter((l) => l.recorrente).length;
-      const semData = res.competenciaOrigem !== "fatura";
+      // Arquivo de lançamentos futuros não é palpite fraco: ele vai, por
+      // regra, para a próxima fatura em aberto. O aviso amarelo fica para
+      // quando o mês saiu mesmo de adivinhação.
+      const semData = res.competenciaOrigem === "compras" || res.competenciaOrigem === "tela";
       const deQuem = `<br>Cartão: <b>${esc(card.nome)}</b>${card.final ? " (final " + card.final + ")" : ""}${
         achado.novo ? " — cadastrado agora, a partir do próprio arquivo." : ""}${
         gemeas.length ? `<br>Movi esta mesma fatura de ${gemeas.map((g) => mesLabel(g.ym)).join(", ")} para ${mesLabel(comp)}.` : ""}`;
       st.innerHTML = `<div class="aviso ${semData ? "atencao" : "bom"}">${semData ? "⚠️" : "✅"}
         <b>${mesLabel(comp)}</b> lançada — ${lancs.length - fut} do mês${
         fut ? `, ${fut} parcelas nos meses seguintes` : ""}${rec ? `, ${rec} recorrentes` : ""}.
-        ${bate ? `<br>Confere com o total impresso: <b>${money(res.totalDeclarado)}</b>.`
+        ${bate ? `<br>Confere com o total impresso: <b>${money(res.totalDeclarado)}</b>${
+                 res.saldoAnterior && Math.abs(semSaldo - soma) < 0.05
+                   ? `, dos quais ${money(res.saldoAnterior)} são saldo da fatura anterior, já contado no mês dela`
+                   : ""}.`
                : res.totalDeclarado
                  ? `<br>⚠️ Somei ${money(soma)}, a fatura diz ${money(res.totalDeclarado)}. Confira os lançamentos.`
                  : ""}
         ${deQuem}
-        ${semData ? `<br>A fatura não diz o vencimento, então usei <b>${mesLabel(comp)}</b>, ${
-          res.competenciaOrigem === "emissao" ? "o mês em que o extrato foi tirado"
-          : res.competenciaOrigem === "compras" ? "o mês da compra mais recente"
-          : "o mês do campo acima"}.
-          Se não for esse, corrija a competência acima e mande o arquivo de novo.` : ""}</div>`;
+        ${res.competenciaOrigem === "emissao"
+          ? `<br>Este arquivo é de <b>lançamentos futuros</b>, então entrou na próxima fatura em
+             aberto, <b>${mesLabel(comp)}</b>. Mês já vencido não é mexido: ele continua com o
+             que foi lançado nele.`
+          : semData ? `<br>A fatura não diz o vencimento, então usei <b>${mesLabel(comp)}</b>, ${
+              res.competenciaOrigem === "compras" ? "o mês da compra mais recente"
+              : "o mês do campo acima"}.
+            Se não for esse, corrija a competência acima e mande o arquivo de novo.` : ""}</div>`;
       const caixa = $("#fatTexto");
       if (caixa) caixa.value = "";
       mesSel = comp;
@@ -1663,13 +1688,14 @@
   function folhaImportarHtml() {
     return `
       <p class="dica" style="margin:0 0 12px">Mande a fatura em PDF ou em texto: as compras entram no mês do
-        vencimento e as parcelas que faltam se espalham sozinhas pelos meses seguintes.</p>
+        vencimento e as parcelas que faltam se espalham sozinhas pelos meses seguintes.
+        Arquivo de lançamentos futuros entra na próxima fatura em aberto: mês que já venceu fica como está.</p>
       <div class="campo"><label>Cartão</label><select id="fatCard"></select></div>
       <p class="dica" style="margin-top:0">O app reconhece o cartão pelo número que vem escrito na fatura e
         cadastra sozinho quando é um novo. Escolha um acima só para forçar.</p>
       <div class="campo"><label>Dia do vencimento da fatura</label>
         <input type="number" id="fatDia" min="1" max="31" inputmode="numeric" placeholder="ex.: 21"></div>
-      <div class="campo hidden" id="fatMesCx"><label>Competência (não achei na fatura)</label>
+      <div class="campo hidden" id="fatMesCx"><label>Competência (mês em que a fatura vence)</label>
         <input type="month" id="fatMes"></div>
       <input type="file" id="fatFile" accept=".pdf,.txt,.csv,text/plain,text/csv,application/pdf" class="arquivo">
       <div style="margin-top:12px"><label class="btn" for="fatFile">Escolher arquivo (PDF ou TXT)</label></div>
@@ -2264,6 +2290,11 @@
       if (!m) return;
       const publicada = "v" + m[1];
       if (publicada === APP_VERSION) return;
+      // Só vale a pena recarregar para uma versão MAIS NOVA. Quando o número
+      // publicado era menor que o aberto (por um bump esquecido no
+      // index.html), o app apagava o service worker e recarregava a cada
+      // abertura, e o app instalado ficava num vai e vem sem nunca abrir.
+      if (+m[1] <= +APP_VERSION.slice(1)) return;
       // Trava contra laço: tenta uma vez por versão publicada.
       if (sessionStorage.getItem("fc_atualizando") === publicada) return;
       sessionStorage.setItem("fc_atualizando", publicada);

@@ -111,15 +111,18 @@ FC.Fatura = (function () {
   }
 
   // ---------- Cabeçalho da fatura ----------
-  // O rótulo nem sempre fica colado na data. Na fatura do Banco do Brasil,
-  // "Vencimento" é uma linha e a data está três linhas abaixo, sozinha —
-  // por isso a busca olha as linhas seguintes, e não só a mesma linha.
   // O rótulo do vencimento muda de banco para banco, e a data quase nunca
   // está colada nele: pode vir na mesma linha, na linha seguinte, ou três
   // linhas abaixo. Aqui a busca é tolerante de propósito — perguntar o mês
   // ao usuário é o último recurso, não o primeiro.
+  //
+  // O separador também muda: o extrato do Banco do Brasil escreve
+  // "Vencimento : 21.09.2026", com PONTO. Lendo só a barra, o vencimento
+  // passava batido, o mês saía de palpite e a fatura caía no mês errado. O
+  // valor em reais não vira data porque o milhar tem três dígitos
+  // ("19.764,54" não casa com dia.mês.ano).
   const RE_ROTULO_VENC = /vencimento|vencto|venc\.|vence em|pagar at[ée]|pagamento at[ée]/i;
-  const RE_DATA = /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/;
+  const RE_DATA = /(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})(?!\d)/;
   const RE_DATA_EXTENSO = /(\d{1,2})\s*(?:de\s+)?([a-zç]{3,9})\.?\s*(?:de\s+)?(\d{4})/i;
 
   function dataExtenso(linha) {
@@ -151,26 +154,48 @@ FC.Fatura = (function () {
     }
     // Reserva: o fechamento diz a competência mesmo sem o vencimento.
     for (let i = 0; i < linhas.length; i++) {
-      const m = linhas[i].match(/fatura fechada em\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i);
+      const m = linhas[i].match(/fatura fechada em\s*(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i);
       if (m) return { partes: [m[1], m[2], m[3]], linha: i };
     }
     return null;
   }
 
+  const maiorMes = (a, b) => (a > b ? a : b);
+
+  // ---------- Qual é a próxima fatura em aberto ----------
+  // Agosto já passou: a fatura de agosto foi paga e o mês está fechado. Um
+  // arquivo de lançamentos futuros tirado depois do dia do vencimento é a
+  // fatura do mês SEGUINTE, nunca a que já venceu. Sem esta conta, o extrato
+  // tirado em 22/09 (vencimento dia 21) voltava para setembro e apagava a
+  // fatura que já tinha sido fechada e paga.
+  //
+  // Sem o dia do vencimento cadastrado, a conta fica no mês corrente: é o
+  // palpite conservador, o que importa é nunca retroagir.
+  function proximaFaturaEmAberto(diaVenc, refISO) {
+    const ref = /^\d{4}-\d{2}-\d{2}$/.test(refISO || "") ? refISO
+      : new Date().toISOString().slice(0, 10);
+    const ym = ref.slice(0, 7);
+    const dia = +ref.slice(8, 10);
+    const venc = parseInt(diaVenc, 10);
+    if (venc >= 1 && venc <= 31 && dia > venc) return FC.Bills.ymAdd(ym, 1);
+    return ym;
+  }
+
   // Fatura ainda aberta ("lançamentos futuros", "próxima fatura") não traz
   // vencimento, e a última compra pode ser do mês passado: o Elo com compras
-  // até 21/08 é a fatura que vence em setembro. Nesse caso vale a data em que
-  // o extrato foi tirado, que o cabeçalho traz.
-  function competenciaPelaEmissao(linhas) {
+  // até 21/08 é a fatura que vence em setembro. O que o cabeçalho traz é a
+  // data em que o extrato foi tirado — devolvida inteira, porque é o dia,
+  // não só o mês, que diz se a fatura daquele mês já venceu.
+  function emissaoDoExtrato(linhas) {
     // O extrato escreve o título espaçado, letra por letra:
     // "L A N Ç A M E N T O S    F U T U R O S". Aqui isso volta a ser palavra.
     const texto = linhas.join("\n")
       .replace(/\b(?:[A-Za-zÀ-ÿ]\s){2,}[A-Za-zÀ-ÿ]\b/g, (m) => m.replace(/\s+/g, ""));
     if (!/lan[çc]amentos\s*futuros|pr[óo]xima\s*fatura|fatura\s*em\s*aberto/i.test(texto)) return null;
     for (const l of linhas) {
-      const m = l.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+      const m = l.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})(?!\d)/);
       if (m && (/\d{2}:\d{2}/.test(l) || /auto[- ]?atendimento|extrato|emiss[ãa]o/i.test(l))) {
-        return m[3] + "-" + pad(+m[2]);
+        return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
       }
     }
     return null;
@@ -227,6 +252,16 @@ FC.Fatura = (function () {
         if (mm) competencia = `${m[2]}-${pad(mm)}`;
       }
     }
+    // "SALDO FATURA ANTERIOR": o que ficou da fatura passada. O extrato de
+    // lançamentos futuros soma esse saldo no total impresso, mas ele já foi
+    // contado quando a fatura anterior entrou — por isso fica guardado à
+    // parte, para a conferência do total não acusar diferença falsa.
+    let saldoAnterior = null;
+    for (const l of linhas) {
+      const s = l.match(/^saldo\s+(?:da\s+)?fatura\s+anterior\D{0,30}(-?\d{1,3}(?:\.\d{3})*,\d{2})/i);
+      if (s) { saldoAnterior = valorBR(s[1]).valor; break; }
+    }
+
     m = texto.match(/(?:total (?:da fatura|a pagar)|valor total(?: da fatura)?)[^\d-]{0,20}(\d{1,3}(?:\.\d{3})*,\d{2})/i);
     if (m) total = valorBR(m[1]).valor;
     // O extrato do BB não escreve "Total da Fatura": escreve uma linha
@@ -238,7 +273,7 @@ FC.Fatura = (function () {
       }
     }
 
-    return { vencimento, competencia, total, linhaVencimento };
+    return { vencimento, competencia, total, saldoAnterior, linhaVencimento };
   }
 
   // ---------- De qual cartão é esta fatura ----------
@@ -309,7 +344,11 @@ FC.Fatura = (function () {
         parcelaAtual: p0 ? p0.i : null, parcelaTotal: p0 ? p0.n : null, linha
       };
     }
-    let m = linha.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+    // Data no começo da linha: 09/08, 09/08/2026, 09-08 e também 08.09.2026,
+    // o jeito do extrato do Banco do Brasil — que ainda cola a descrição no
+    // ano, sem espaço ("08.09.2026DESC AUTOMATICO"). Por isso não se exige
+    // fim de palavra depois do ano, só que não venha outro dígito.
+    let m = linha.match(/^(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4})(?!\d))?/);
     if (m) {
       dia = +m[1]; mes = +m[2];
       if (m[3]) ano = m[3].length === 2 ? 2000 + +m[3] : +m[3];
@@ -459,17 +498,26 @@ FC.Fatura = (function () {
   }
 
   // ---------- Fatura inteira ----------
-  function analisar(linhas, competenciaPadrao, forcada) {
+  function analisar(linhas, competenciaPadrao, forcada, opcoes) {
+    const diaVenc = opcoes && opcoes.diaVenc;
     const cab = lerCabecalho(linhas);
     // Cabeçalho de colunas "... Valor R$   Valor US$": diz que o real vem
     // antes do dólar em cada linha.
     const rsAntesDeUs = linhas.some((l) => /valor\s*r\$[\s\S]{0,40}valor\s*us\$/i.test(l));
     // Ordem: o mês que VOCÊ escolheu na tela manda em tudo. Depois o que está
-    // escrito na fatura, depois a data em que o extrato foi tirado (fatura
-    // ainda aberta), e só então o mês da compra mais recente.
-    const emissao = (forcada || cab.competencia) ? null : competenciaPelaEmissao(linhas);
-    const palpite = (forcada || cab.competencia || emissao) ? null : competenciaPelasCompras(linhas);
-    const competencia = forcada || cab.competencia || emissao || palpite || competenciaPadrao;
+    // escrito na fatura, depois o extrato de lançamentos futuros (que é sempre
+    // a próxima fatura em aberto), e só então o mês da compra mais recente.
+    //
+    // Arquivo de lançamentos futuros olha PARA FRENTE: ele não vira o mês em
+    // que foi tirado, vira a primeira fatura que ainda não venceu — nem a do
+    // extrato, se o dia do vencimento daquele mês já passou, nem nenhum mês
+    // anterior a hoje. Mês que já fechou continua com o que foi lançado nele.
+    const emissao = (forcada || cab.competencia) ? null : emissaoDoExtrato(linhas);
+    const futura = emissao
+      ? maiorMes(proximaFaturaEmAberto(diaVenc, emissao), proximaFaturaEmAberto(diaVenc))
+      : null;
+    const palpite = (forcada || cab.competencia || futura) ? null : competenciaPelasCompras(linhas);
+    const competencia = forcada || cab.competencia || futura || palpite || competenciaPadrao;
     const itens = [], ignoradas = [];
     let secao = "", portador = "";
     linhas.forEach((l, indice) => {
@@ -514,10 +562,11 @@ FC.Fatura = (function () {
       competenciaDetectada: !!(forcada || cab.competencia),
       competenciaOrigem: forcada ? "escolhida"
         : cab.competencia ? "fatura"
-        : emissao ? "emissao"
+        : futura ? "emissao"
         : palpite ? "compras" : "tela",
       vencimento: cab.vencimento,
       totalDeclarado: cab.total,
+      saldoAnterior: cab.saldoAnterior,
       itens,
       ignoradas,
       totalCompras: bruto,
@@ -702,7 +751,8 @@ FC.Fatura = (function () {
   return {
     lerLinhas, lerArquivo, linhasDeTexto,
     analisar, analisarTolerante, expandir, acharVencimento, competenciaPelasCompras,
-    competenciaPelaEmissao, identificarCartao, substituiveis, manuaisEmRisco, diaVencimento,
+    emissaoDoExtrato, proximaFaturaEmAberto,
+    identificarCartao, substituiveis, manuaisEmRisco, diaVencimento,
     valorBR, acharParcela, ehRecorrente, chaveSerie, recorrentesConhecidas
   };
 })();
