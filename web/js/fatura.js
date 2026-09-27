@@ -46,9 +46,34 @@ FC.Fatura = (function () {
   // Uma linha do PDF é um conjunto de pedaços na MESMA altura (y). O pdf.js
   // entrega texto solto com coordenadas, então agrupamos por y e ordenamos
   // por x para reconstruir a linha como ela aparece na tela.
+  // A biblioteca de PDF pesa quase 90 KB comprimidos e só serve na hora de
+  // importar uma fatura em PDF. Carregada no <script> da página, ela atrasava
+  // TODA abertura do app, inclusive a de quem nunca importa nada. Aqui ela é
+  // buscada no primeiro PDF e fica em memória para os seguintes.
+  const CDN_PDF = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/";
+  let pdfPromessa = null;
+
+  function carregarPdfJs() {
+    if (typeof pdfjsLib !== "undefined") return Promise.resolve();
+    if (pdfPromessa) return pdfPromessa;
+    pdfPromessa = new Promise((ok, falha) => {
+      const s = document.createElement("script");
+      s.src = CDN_PDF + "pdf.min.js";
+      s.onload = () => {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = CDN_PDF + "pdf.worker.min.js";
+        ok();
+      };
+      s.onerror = () => {
+        pdfPromessa = null;
+        falha(new Error("A biblioteca de PDF não carregou (precisa de internet). Cole o texto da fatura."));
+      };
+      document.head.appendChild(s);
+    });
+    return pdfPromessa;
+  }
+
   async function lerLinhas(file) {
-    if (typeof pdfjsLib === "undefined")
-      throw new Error("A biblioteca de PDF não carregou (precisa de internet na primeira vez).");
+    await carregarPdfJs();
     const buf = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
     const linhas = [];

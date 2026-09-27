@@ -12,7 +12,7 @@
  * o que estava no painel antigo.
  * =========================================================== */
 (function () {
-  const APP_VERSION = "v63";
+  const APP_VERSION = "v64";
   const MAX_FATURAS = 5;
   const MESES_FUTURO = 12;
   const LISTA_INICIAL = 40;
@@ -2337,10 +2337,6 @@
   // ---------- Boot ----------
   async function boot() {
     marcarVersao();
-    if (typeof pdfjsLib !== "undefined") {
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
-    }
     if (FC.Auth && FC.Auth.requireLogin) await FC.Auth.requireLogin();
     await Store.init();
 
